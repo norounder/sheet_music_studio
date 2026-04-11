@@ -307,39 +307,25 @@ export class ScoreRenderer {
         this.renderEnding(measure.barline.ending, staves[0]);
       }
 
-      // 빔 렌더링: MusicXML 명시적 빔 그룹 우선, 없으면 자동 빔 생성 폴백
-      if (measureNotes.hasExplicitBeamData && measureNotes.beamGroups.length > 0) {
-        // 명시적 빔 그룹 렌더링
-        for (const beamGroup of measureNotes.beamGroups) {
-          if (beamGroup.notes.length >= 2) {
-            try {
-              const beam = new Beam(beamGroup.notes);
+      // 빔 렌더링: 항상 자동 빔 생성을 사용 (VexFlow가 박자/duration 기반으로 빔 그룹 결정)
+      // MusicXML의 명시적 빔 데이터는 추후 정밀 제어에 활용 가능
+      const NON_BEAMABLE = new Set(['w', 'h', 'wr', 'hr']);
+      for (const noteGroup of measureNotes.vexNotesByVoice) {
+        try {
+          const beamable = noteGroup.filter(
+            (n) => !NON_BEAMABLE.has(n.getDuration() + (n.isRest() ? 'r' : '')),
+          );
+          if (beamable.length >= 2) {
+            const autoBeams = Beam.generateBeams(beamable, {
+              maintainStemDirections: true,
+              beamRests: true,
+            });
+            for (const beam of autoBeams) {
               beam.setContext(this.context!).draw();
-            } catch {
-              // Skip invalid beam groups
             }
           }
-        }
-      } else {
-        // 자동 빔 생성 폴백 — whole/half notes 필터링, beamRests 활성화
-        const NON_BEAMABLE = new Set(['w', 'h', 'wr', 'hr']);
-        for (const noteGroup of measureNotes.vexNotesByVoice) {
-          try {
-            const beamable = noteGroup.filter(
-              (n) => !NON_BEAMABLE.has(n.getDuration() + (n.isRest() ? 'r' : '')),
-            );
-            if (beamable.length >= 2) {
-              const autoBeams = Beam.generateBeams(beamable, {
-                maintainStemDirections: true,
-                beamRests: true,
-              });
-              for (const beam of autoBeams) {
-                beam.setContext(this.context!).draw();
-              }
-            }
-          } catch (e) {
-            console.warn('Beam generation failed:', e);
-          }
+        } catch (e) {
+          console.warn('Beam generation failed:', e);
         }
       }
 
@@ -606,7 +592,7 @@ export class ScoreRenderer {
 
     const flushChord = () => {
       if (chordElement && chordKeys.length > 0) {
-        const sn = this.createStaveNote(chordElement, chordKeys, voiceNum, measure, currentKeyFifths, isMultiVoice, staffNum, currentClefs);
+        const sn = this.createStaveNote(chordElement, chordKeys, voiceNum, isFirstVoice, measure, currentKeyFifths, isMultiVoice, staffNum, currentClefs);
         if (sn) {
           attachPendingGraceNotes(sn);
           vexNotes.push(sn);
