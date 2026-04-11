@@ -306,19 +306,39 @@ export class ScoreRenderer {
         this.renderEnding(measure.barline.ending, staves[0]);
       }
 
-      // 자동 빔 생성 — VexFlow가 음표 duration 기반으로 빔 그룹을 자동 생성
-      for (const noteGroup of measureNotes.vexNotesByVoice) {
-        try {
-          if (noteGroup.length >= 2) {
-            const autoBeams = Beam.generateBeams(noteGroup, {
-              maintainStemDirections: true,
-            });
-            for (const beam of autoBeams) {
+      // 빔 렌더링: MusicXML 명시적 빔 그룹 우선, 없으면 자동 빔 생성 폴백
+      if (measureNotes.hasExplicitBeamData && measureNotes.beamGroups.length > 0) {
+        // 명시적 빔 그룹 렌더링
+        for (const beamGroup of measureNotes.beamGroups) {
+          if (beamGroup.notes.length >= 2) {
+            try {
+              const beam = new Beam(beamGroup.notes);
               beam.setContext(this.context!).draw();
+            } catch {
+              // Skip invalid beam groups
             }
           }
-        } catch (e) {
-          console.warn('Beam generation failed:', e);
+        }
+      } else {
+        // 자동 빔 생성 폴백 — whole/half notes 필터링, beamRests 활성화
+        const NON_BEAMABLE = new Set(['w', 'h', 'wr', 'hr']);
+        for (const noteGroup of measureNotes.vexNotesByVoice) {
+          try {
+            const beamable = noteGroup.filter(
+              (n) => !NON_BEAMABLE.has(n.getDuration() + (n.isRest() ? 'r' : '')),
+            );
+            if (beamable.length >= 2) {
+              const autoBeams = Beam.generateBeams(beamable, {
+                maintainStemDirections: true,
+                beamRests: true,
+              });
+              for (const beam of autoBeams) {
+                beam.setContext(this.context!).draw();
+              }
+            }
+          } catch (e) {
+            console.warn('Beam generation failed:', e);
+          }
         }
       }
 
@@ -425,14 +445,15 @@ export class ScoreRenderer {
     allRenderedNotes: RenderedNote[],
     currentKeyFifths: number,
     currentClefs: Map<number, string>,
-  ): { beamGroups: BeamGroup[]; tupletGroups: TupletGroup[]; vexNotesByVoice: StaveNote[][] } {
-    if (!this.context) return { beamGroups: [], tupletGroups: [], vexNotesByVoice: [] };
+  ): { beamGroups: BeamGroup[]; tupletGroups: TupletGroup[]; vexNotesByVoice: StaveNote[][]; hasExplicitBeamData: boolean } {
+    if (!this.context) return { beamGroups: [], tupletGroups: [], vexNotesByVoice: [], hasExplicitBeamData: false };
 
     // 성부별로 요소 분류
     const voiceMap = this.groupElementsByVoiceAndStaff(measure.elements, numStaves);
     const beamGroups: BeamGroup[] = [];
     const tupletGroups: TupletGroup[] = [];
     const vexNotesByVoice: StaveNote[][] = [];
+    let hasExplicitBeamData = false;
 
     // 각 보표별로 성부 렌더링
     for (let staffNum = 1; staffNum <= numStaves; staffNum++) {
@@ -447,9 +468,11 @@ export class ScoreRenderer {
       const isMultiVoice = staffVoices.size > 1;
 
       for (const [voiceNum, elements] of staffVoices) {
-        const { vexNotes, beams, tuplets, rendered } = this.convertElementsToVexNotes(
+        const result = this.convertElementsToVexNotes(
           elements, staffNum, voiceNum, measureIndex, measure, currentKeyFifths, isMultiVoice, currentClefs,
         );
+        const { vexNotes, beams, tuplets, rendered } = result;
+        if (result.hasExplicitBeamData) hasExplicitBeamData = true;
 
         allRenderedNotes.push(...rendered);
 
@@ -486,7 +509,7 @@ export class ScoreRenderer {
       }
     }
 
-    return { beamGroups, tupletGroups, vexNotesByVoice };
+    return { beamGroups, tupletGroups, vexNotesByVoice, hasExplicitBeamData };
   }
 
   // ─── 요소 분류 ───
@@ -536,14 +559,20 @@ export class ScoreRenderer {
     beams: BeamGroup[];
     tuplets: TupletGroup[];
     rendered: RenderedNote[];
+    hasExplicitBeamData: boolean;
   } {
     const vexNotes: StaveNote[] = [];
     const rendered: RenderedNote[] = [];
     const beams: BeamGroup[] = [];
     const tuplets: TupletGroup[] = [];
 
-    // 빔 추적 (자동 빔 생성으로 대체되었으므로 미사용)
+    // 빔 추적 (MusicXML beam 정보가 있으면 명시적 빔 그룹 사용)
     const currentBeamNotes: StaveNote[] = [];
+    let hasExplicitBeamData = false;
+
+    // 잇단음표 추적
+    const currentTupletNotes: StaveNote[] = [];
+    const currentTupletInfo: { actualNotes: number; normalNotes: number } = { actualNotes: 0, normalNotes: 0 };
 
     // 화음 그룹 추적
     let chordKeys: string[] = [];
@@ -561,6 +590,17 @@ export class ScoreRenderer {
             voice: voiceNum,
             staff: staffNum,
           });
+
+          // 빔 추적: MusicXML beam 정보가 있으면 명시적 빔 그룹 수집
+          if (chordElement.beam && chordElement.beam.length > 0) {
+            hasExplicitBeamData = true;
+            this.trackBeam(chordElement, sn, currentBeamNotes, beams, voiceNum, staffNum);
+          }
+
+          // 잇단음표 추적
+          if (chordElement.duration.tuplet) {
+            this.trackTuplet(chordElement, sn, currentTupletNotes, currentTupletInfo, tuplets);
+          }
         }
         chordKeys = [];
         chordElement = null;
@@ -599,7 +639,21 @@ export class ScoreRenderer {
     // 마지막 화음 그룹 플러시
     flushChord();
 
-    return { vexNotes, beams, tuplets, rendered };
+    // 잔여 빔 그룹 플러시 (end 없이 끝난 경우)
+    if (currentBeamNotes.length >= 2) {
+      beams.push({ notes: [...currentBeamNotes], voice: voiceNum, staff: staffNum });
+    }
+
+    // 잔여 잇단음표 그룹 플러시
+    if (currentTupletNotes.length > 0 && currentTupletInfo.actualNotes > 0) {
+      tuplets.push({
+        notes: [...currentTupletNotes],
+        actualNotes: currentTupletInfo.actualNotes,
+        normalNotes: currentTupletInfo.normalNotes,
+      });
+    }
+
+    return { vexNotes, beams, tuplets, rendered, hasExplicitBeamData };
   }
 
   // ─── StaveNote 생성 ───
@@ -821,7 +875,7 @@ export class ScoreRenderer {
     element: NoteElement,
     staveNote: StaveNote,
     currentTupletNotes: StaveNote[],
-    currentTupletInfo: { actualNotes: number; normalNotes: number } | null,
+    currentTupletInfo: { actualNotes: number; normalNotes: number },
     tuplets: TupletGroup[],
   ): void {
     if (!element.duration.tuplet) return;
@@ -829,7 +883,7 @@ export class ScoreRenderer {
     const tupletInfo = element.duration.tuplet;
     if (tupletInfo.type === 'start') {
       // 이전 잇단음표 그룹 플러시
-      if (currentTupletNotes.length > 0 && currentTupletInfo) {
+      if (currentTupletNotes.length > 0 && currentTupletInfo.actualNotes > 0) {
         tuplets.push({
           notes: [...currentTupletNotes],
           actualNotes: currentTupletInfo.actualNotes,
@@ -839,13 +893,11 @@ export class ScoreRenderer {
       currentTupletNotes.length = 0;
       currentTupletNotes.push(staveNote);
       // Update info via mutation (since we pass by reference)
-      Object.assign(currentTupletInfo ?? {}, {
-        actualNotes: tupletInfo.actualNotes,
-        normalNotes: tupletInfo.normalNotes,
-      });
+      currentTupletInfo.actualNotes = tupletInfo.actualNotes;
+      currentTupletInfo.normalNotes = tupletInfo.normalNotes;
     } else if (tupletInfo.type === 'stop') {
       currentTupletNotes.push(staveNote);
-      if (currentTupletNotes.length > 0 && currentTupletInfo) {
+      if (currentTupletNotes.length > 0 && currentTupletInfo.actualNotes > 0) {
         tuplets.push({
           notes: [...currentTupletNotes],
           actualNotes: currentTupletInfo.actualNotes,
@@ -853,6 +905,8 @@ export class ScoreRenderer {
         });
       }
       currentTupletNotes.length = 0;
+      currentTupletInfo.actualNotes = 0;
+      currentTupletInfo.normalNotes = 0;
     } else {
       currentTupletNotes.push(staveNote);
     }
