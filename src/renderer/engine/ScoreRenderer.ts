@@ -40,7 +40,6 @@ import {
   Articulation as VexArticulation,
   Ornament as VexOrnament,
   Annotation,
-  TextDynamics,
   Volta,
   Accidental,
   Dot,
@@ -351,8 +350,8 @@ export class ScoreRenderer {
               notesOccupied: tupletGroup.normalNotes,
             });
             tuplet.setContext(this.context!).draw();
-          } catch {
-            // Skip invalid tuplet groups
+          } catch (e) {
+            console.warn('[ScoreRenderer] tuplet rendering failed:', { measureIndex: mIdx, actualNotes: tupletGroup.actualNotes, normalNotes: tupletGroup.normalNotes, error: e });
           }
         }
       }
@@ -503,8 +502,8 @@ export class ScoreRenderer {
           for (const v of vexVoices) {
             v.draw(this.context!, stave);
           }
-        } catch {
-          // Format/draw can fail for edge cases; skip silently
+        } catch (e) {
+          console.warn('[ScoreRenderer] format/draw failed:', { measureIndex, staffNum, error: e });
         }
       }
     }
@@ -574,14 +573,27 @@ export class ScoreRenderer {
     const currentTupletNotes: StaveNote[] = [];
     const currentTupletInfo: { actualNotes: number; normalNotes: number } = { actualNotes: 0, normalNotes: 0 };
 
+    // 꾸밈음 대기열: 다음 일반 음표에 부착할 GraceNote 목록
+    let pendingGraceNotes: GraceNote[] = [];
+
     // 화음 그룹 추적
     let chordKeys: string[] = [];
     let chordElement: NoteElement | null = null;
+
+    /** 대기 중인 꾸밈음을 StaveNote에 부착한다 */
+    const attachPendingGraceNotes = (staveNote: StaveNote): void => {
+      if (pendingGraceNotes.length > 0) {
+        const graceGroup = new GraceNoteGroup(pendingGraceNotes);
+        staveNote.addModifier(graceGroup);
+        pendingGraceNotes = [];
+      }
+    };
 
     const flushChord = () => {
       if (chordElement && chordKeys.length > 0) {
         const sn = this.createStaveNote(chordElement, chordKeys, voiceNum, measure, currentKeyFifths, isMultiVoice, staffNum, currentClefs);
         if (sn) {
+          attachPendingGraceNotes(sn);
           vexNotes.push(sn);
           rendered.push({
             staveNote: sn,
@@ -611,6 +623,22 @@ export class ScoreRenderer {
       if (el.type === 'forward') continue;
 
       if (el.type === 'note') {
+        // 꾸밈음: GraceNote를 생성하여 대기열에 추가, StaveNote는 생성하지 않음
+        if (el.graceNote) {
+          try {
+            const graceKeys = [mapPitchToVexKey(el.pitch)];
+            const graceNote = new GraceNote({
+              keys: graceKeys,
+              duration: '8',
+              slash: el.graceNote?.slash ?? true,
+            });
+            pendingGraceNotes.push(graceNote);
+          } catch (e) {
+            console.warn('[ScoreRenderer] createGraceNote failed:', { measureIndex, elementId: el.id, error: e });
+          }
+          continue;
+        }
+
         if (el.chord) {
           // 화음: 이전 음표에 키 추가
           chordKeys.push(mapPitchToVexKey(el.pitch));
@@ -624,6 +652,7 @@ export class ScoreRenderer {
         flushChord();
         const sn = this.createRestNote(el, voiceNum, measure, isMultiVoice, staffNum, currentClefs);
         if (sn) {
+          attachPendingGraceNotes(sn);
           vexNotes.push(sn);
           rendered.push({
             staveNote: sn,
@@ -672,9 +701,10 @@ export class ScoreRenderer {
       const duration = mapDurationToVexDuration(element.duration);
       const clef = currentClefs.get(staffNum) ?? 'treble';
 
-      // 꾸밈음 처리
+      // 꾸밈음은 convertElementsToVexNotes()에서 직접 처리되므로 여기서는 도달하지 않음
+      // (안전장치로 남겨둠)
       if (element.graceNote) {
-        return this.createGraceNoteAttached(element, keys, duration, voiceNum, clef);
+        return null;
       }
 
       const noteParams: ConstructorParameters<typeof StaveNote>[0] = {
@@ -725,9 +755,9 @@ export class ScoreRenderer {
       }
 
       // 다이나믹 추가
+      // TextDynamics extends Note (not Modifier) in VexFlow 5, so it cannot be
+      // attached as a modifier to StaveNote. Use Annotation as a workaround.
       if (element.dynamics) {
-        const dyn = new TextDynamics({ text: element.dynamics, duration });
-        // TextDynamics는 별도 렌더링이 필요하므로 여기서는 Annotation으로 대체
         staveNote.addModifier(
           new Annotation(element.dynamics)
             .setVerticalJustification(Annotation.VerticalJustify.BOTTOM),
@@ -746,7 +776,8 @@ export class ScoreRenderer {
       }
 
       return staveNote;
-    } catch {
+    } catch (e) {
+      console.warn('[ScoreRenderer] createStaveNote failed:', { measureIndex: undefined, elementId: element.id, error: e });
       return null;
     }
   }
@@ -799,7 +830,8 @@ export class ScoreRenderer {
       }
 
       return staveNote;
-    } catch {
+    } catch (e) {
+      console.warn('[ScoreRenderer] createRestNote failed:', { elementId: element.id, staffNum, error: e });
       return null;
     }
   }
@@ -833,7 +865,8 @@ export class ScoreRenderer {
       staveNote.addModifier(graceGroup);
 
       return staveNote;
-    } catch {
+    } catch (e) {
+      console.warn('[ScoreRenderer] createGraceNoteAttached failed:', { elementId: element.id, error: e });
       return null;
     }
   }
@@ -938,8 +971,8 @@ export class ScoreRenderer {
               lastIndexes: [0],
             });
             tie.setContext(this.context!).draw();
-          } catch {
-            // Skip invalid ties
+          } catch (e) {
+            console.warn('[ScoreRenderer] tie rendering failed:', { key, error: e });
           }
           tieStarts.delete(key);
         }
@@ -974,8 +1007,8 @@ export class ScoreRenderer {
                   ],
                 });
                 curve.setContext(this.context!).draw();
-              } catch {
-                // Skip invalid curves
+              } catch (e) {
+                console.warn('[ScoreRenderer] slur rendering failed:', { key, error: e });
               }
               slurStarts.delete(key);
             }
@@ -1046,8 +1079,8 @@ export class ScoreRenderer {
 
       const text = ending.text ?? ending.number.join(', ') + '.';
       stave.setVoltaType(voltaType, text, 0);
-    } catch {
-      // Skip invalid volta
+    } catch (e) {
+      console.warn('[ScoreRenderer] volta rendering failed:', { endingType: ending.type, endingNumber: ending.number, error: e });
     }
   }
 }
