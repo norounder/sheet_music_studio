@@ -128,6 +128,7 @@ export class ScoreRenderer {
   private config: RenderConfig;
   private renderer: Renderer | null = null;
   private context: RenderContext | null = null;
+  private renderedNotes: RenderedNote[] = [];
 
   constructor(container: HTMLElement, config?: Partial<RenderConfig>) {
     this.container = container;
@@ -147,6 +148,9 @@ export class ScoreRenderer {
     for (const part of scoreData.parts) {
       this.renderPart(part);
     }
+
+    // SVG 요소에 data-element-id 속성 부착 (클릭 선택용)
+    this.attachElementIds();
   }
 
   /** 컨테이너 내용을 초기화한다 */
@@ -154,11 +158,24 @@ export class ScoreRenderer {
     this.container.innerHTML = '';
     this.renderer = null;
     this.context = null;
+    this.renderedNotes = [];
   }
 
   /** 렌더링 설정을 업데이트한다 */
   updateConfig(config: Partial<RenderConfig>): void {
     this.config = { ...this.config, ...config };
+  }
+
+  // ─── SVG data attribute 부착 (클릭 선택용) ───
+
+  private attachElementIds(): void {
+    for (const rn of this.renderedNotes) {
+      const svgEl = rn.staveNote.getSVGElement();
+      if (svgEl) {
+        svgEl.setAttribute('data-element-id', rn.element.id);
+        svgEl.style.cursor = 'pointer';
+      }
+    }
   }
 
   // ─── 초기화 ───
@@ -208,18 +225,18 @@ export class ScoreRenderer {
     // 첫 마디 추가 너비 (음자리표+조표+박자표 공간)
     const firstMeasureExtra = 60;
 
-    // 렌더링된 음표 추적 (타이/슬러 연결용)
+    // 렌더링된 음표 추적 (타이/슬러 연결 및 클릭 선택용)
     const allRenderedNotes: RenderedNote[] = [];
 
     // 현재 조표 추적 (마디 간 전파)
     let currentKeyFifths = 0;
 
     // 현재 음자리표 추적 (보표별, 마디 간 전파)
-    // key: staffNumber, value: clef sign ('G', 'F', 'C')
+    // key: staffNumber, value: VexFlow clef string ('treble', 'bass', 'alto', ...)
     const currentClefs = new Map<number, string>();
     // 기본값 설정
-    currentClefs.set(1, 'G');
-    if (numStaves >= 2) currentClefs.set(2, 'F');
+    currentClefs.set(1, 'treble');
+    if (numStaves >= 2) currentClefs.set(2, 'bass');
 
     for (let mIdx = 0; mIdx < measures.length; mIdx++) {
       const measure = measures[mIdx];
@@ -232,7 +249,7 @@ export class ScoreRenderer {
       // 음자리표가 변경되면 업데이트
       if (measure.attributes?.clef) {
         for (const c of measure.attributes.clef) {
-          currentClefs.set(c.staffNumber, c.sign);
+          currentClefs.set(c.staffNumber, mapClefToVexClef(c));
         }
       }
 
@@ -326,6 +343,9 @@ export class ScoreRenderer {
 
     // 슬러 렌더링
     this.renderSlurs(allRenderedNotes);
+
+    // 인스턴스에 렌더링된 음표 저장 (클릭 선택용)
+    this.renderedNotes.push(...allRenderedNotes);
   }
 
   // ─── Stave 생성 ───
@@ -531,7 +551,7 @@ export class ScoreRenderer {
 
     const flushChord = () => {
       if (chordElement && chordKeys.length > 0) {
-        const sn = this.createStaveNote(chordElement, chordKeys, voiceNum, measure, currentKeyFifths, isMultiVoice);
+        const sn = this.createStaveNote(chordElement, chordKeys, voiceNum, measure, currentKeyFifths, isMultiVoice, staffNum, currentClefs);
         if (sn) {
           vexNotes.push(sn);
           rendered.push({
@@ -591,18 +611,22 @@ export class ScoreRenderer {
     measure: Measure,
     currentKeyFifths: number,
     isMultiVoice: boolean,
+    staffNum: number,
+    currentClefs: Map<number, string>,
   ): StaveNote | null {
     try {
       const duration = mapDurationToVexDuration(element.duration);
+      const clef = currentClefs.get(staffNum) ?? 'treble';
 
       // 꾸밈음 처리
       if (element.graceNote) {
-        return this.createGraceNoteAttached(element, keys, duration, voiceNum);
+        return this.createGraceNoteAttached(element, keys, duration, voiceNum, clef);
       }
 
       const noteParams: ConstructorParameters<typeof StaveNote>[0] = {
         keys,
         duration,
+        clef,
       };
 
       // 줄기 방향: 다성부면 voice 1=위, voice 2=아래. 단일 성부면 VexFlow 자동
@@ -683,21 +707,37 @@ export class ScoreRenderer {
   ): StaveNote | null {
     try {
       const duration = mapDurationToVexDuration(element.duration) + 'r';
+      const clef = currentClefs.get(staffNum) ?? 'treble';
 
-      // 쉼표 위치: 음자리표에 따라 오선 중앙이 다름
-      const clefSign = currentClefs.get(staffNum) ?? 'G';
+      // 쉼표 위치 결정: displayStep/displayOctave > 다성부 오프셋 > 오선 중앙
       let restKey: string;
-      if (clefSign === 'F') {
-        restKey = 'd/3'; // bass clef 오선 중앙
-      } else if (clefSign === 'C') {
-        restKey = 'b/3'; // alto/tenor clef 오선 중앙
+      if (element.displayStep && element.displayOctave != null) {
+        // MusicXML에서 지정한 위치 사용
+        restKey = `${element.displayStep.toLowerCase()}/${element.displayOctave}`;
+      } else if (isMultiVoice) {
+        // 다성부: 충돌 방지를 위해 voice별 오프셋
+        if (clef === 'bass') {
+          restKey = voiceNum <= 1 ? 'f/3' : 'b/2';
+        } else if (clef === 'alto' || clef === 'tenor') {
+          restKey = voiceNum <= 1 ? 'd/4' : 'f/3';
+        } else {
+          restKey = voiceNum <= 1 ? 'd/5' : 'f/4';
+        }
       } else {
-        restKey = 'b/4'; // treble clef 오선 중앙
+        // 단일 성부: 오선 중앙
+        if (clef === 'bass') {
+          restKey = 'd/3';
+        } else if (clef === 'alto' || clef === 'tenor') {
+          restKey = 'b/3';
+        } else {
+          restKey = 'b/4';
+        }
       }
 
       const staveNote = new StaveNote({
         keys: [restKey],
         duration,
+        clef,
       });
 
       for (let d = 0; d < element.duration.dots; d++) {
@@ -715,6 +755,7 @@ export class ScoreRenderer {
     keys: string[],
     duration: string,
     voiceNum: number,
+    clef: string,
   ): StaveNote | null {
     try {
       // 꾸밈음은 GraceNote로 생성하고 다음 음표에 붙여야 하지만,
@@ -730,6 +771,7 @@ export class ScoreRenderer {
       const staveNote = new StaveNote({
         keys,
         duration,
+        clef,
         stemDirection: voiceNum === 2 ? -1 : 1,
       });
 
