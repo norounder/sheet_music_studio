@@ -111,6 +111,8 @@ interface RenderedNote {
   measureIndex: number;
   voice: number;
   staff: number;
+  /** 음표가 위치한 시스템(줄) 인덱스 — cross-line 타이/슬러 판별용 */
+  lineIndex: number;
 }
 
 /** 빔 그룹 추적용 */
@@ -295,7 +297,7 @@ export class ScoreRenderer {
       }
 
       // 음표/쉼표 렌더링
-      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs);
+      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs, lineIndex);
 
       // Direction 렌더링 (다이나믹, 템포 등)
       this.renderDirections(measure.directions, staves);
@@ -444,6 +446,7 @@ export class ScoreRenderer {
     allRenderedNotes: RenderedNote[],
     currentKeyFifths: number,
     currentClefs: Map<number, string>,
+    lineIndex: number,
   ): { beamGroups: BeamGroup[]; tupletGroups: TupletGroup[]; vexNotesByVoice: StaveNote[][]; hasExplicitBeamData: boolean } {
     if (!this.context) return { beamGroups: [], tupletGroups: [], vexNotesByVoice: [], hasExplicitBeamData: false };
 
@@ -468,7 +471,7 @@ export class ScoreRenderer {
 
       for (const [voiceNum, elements] of staffVoices) {
         const result = this.convertElementsToVexNotes(
-          elements, staffNum, voiceNum, measureIndex, measure, currentKeyFifths, isMultiVoice, currentClefs,
+          elements, staffNum, voiceNum, measureIndex, measure, currentKeyFifths, isMultiVoice, currentClefs, lineIndex,
         );
         const { vexNotes, beams, tuplets, rendered } = result;
         if (result.hasExplicitBeamData) hasExplicitBeamData = true;
@@ -553,6 +556,7 @@ export class ScoreRenderer {
     currentKeyFifths: number,
     isMultiVoice: boolean,
     currentClefs: Map<number, string>,
+    lineIndex: number,
   ): {
     vexNotes: StaveNote[];
     beams: BeamGroup[];
@@ -601,6 +605,7 @@ export class ScoreRenderer {
             measureIndex,
             voice: voiceNum,
             staff: staffNum,
+            lineIndex,
           });
 
           // 빔 추적: MusicXML beam 정보가 있으면 명시적 빔 그룹 수집
@@ -660,6 +665,7 @@ export class ScoreRenderer {
             measureIndex,
             voice: voiceNum,
             staff: staffNum,
+            lineIndex,
           });
         }
       }
@@ -964,13 +970,33 @@ export class ScoreRenderer {
         const startNote = tieStarts.get(key);
         if (startNote) {
           try {
-            const tie = new StaveTie({
-              firstNote: startNote.staveNote,
-              lastNote: rn.staveNote,
-              firstIndexes: [0],
-              lastIndexes: [0],
-            });
-            tie.setContext(this.context!).draw();
+            if (startNote.lineIndex === rn.lineIndex) {
+              // 같은 줄: 양쪽 음표를 연결하는 일반 타이
+              const tie = new StaveTie({
+                firstNote: startNote.staveNote,
+                lastNote: rn.staveNote,
+                firstIndexes: [0],
+                lastIndexes: [0],
+              });
+              tie.setContext(this.context!).draw();
+            } else {
+              // 줄 넘김 타이: 양쪽 끝에 partial tie 2개 생성
+              const tieEnd = new StaveTie({
+                firstNote: startNote.staveNote,
+                lastNote: null as unknown as StaveNote,
+                firstIndexes: [0],
+                lastIndexes: [0],
+              });
+              tieEnd.setContext(this.context!).draw();
+
+              const tieStart = new StaveTie({
+                firstNote: null as unknown as StaveNote,
+                lastNote: rn.staveNote,
+                firstIndexes: [0],
+                lastIndexes: [0],
+              });
+              tieStart.setContext(this.context!).draw();
+            }
           } catch (e) {
             console.warn('[ScoreRenderer] tie rendering failed:', { key, error: e });
           }
@@ -1000,13 +1026,33 @@ export class ScoreRenderer {
             const startNote = slurStarts.get(key);
             if (startNote) {
               try {
-                const curve = new Curve(startNote.staveNote, rn.staveNote, {
-                  cps: [
-                    { x: 0, y: 20 },
-                    { x: 0, y: 20 },
-                  ],
-                });
-                curve.setContext(this.context!).draw();
+                if (startNote.lineIndex === rn.lineIndex) {
+                  // 같은 줄: 일반 슬러 커브
+                  const curve = new Curve(startNote.staveNote, rn.staveNote, {
+                    cps: [
+                      { x: 0, y: 20 },
+                      { x: 0, y: 20 },
+                    ],
+                  });
+                  curve.setContext(this.context!).draw();
+                } else {
+                  // 줄 넘김 슬러: StaveTie로 partial 렌더링
+                  const slurEnd = new StaveTie({
+                    firstNote: startNote.staveNote,
+                    lastNote: null as unknown as StaveNote,
+                    firstIndexes: [0],
+                    lastIndexes: [0],
+                  });
+                  slurEnd.setContext(this.context!).draw();
+
+                  const slurStart = new StaveTie({
+                    firstNote: null as unknown as StaveNote,
+                    lastNote: rn.staveNote,
+                    firstIndexes: [0],
+                    lastIndexes: [0],
+                  });
+                  slurStart.setContext(this.context!).draw();
+                }
               } catch (e) {
                 console.warn('[ScoreRenderer] slur rendering failed:', { key, error: e });
               }
