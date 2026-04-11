@@ -1,5 +1,3 @@
 node_modules/
 dist/
-*.mxl
-*.pdf
 .DS_Store
