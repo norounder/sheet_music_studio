@@ -1,0 +1,272 @@
+/* ─── Score Editor Layout ─── */
+
+.editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─── Toolbar ─── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background-color: #181825;
+  border-bottom: 1px solid #313244;
+  min-height: 44px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background-color: #313244;
+  margin: 0 6px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #cdd6f4;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background-color: #313244;
+}
+
+.toolbar-btn:active:not(:disabled) {
+  background-color: #45475a;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-btn .icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.toolbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #cba6f7;
+  margin-right: 12px;
+  -webkit-app-region: drag;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.zoom-display {
+  font-size: 12px;
+  color: #a6adc8;
+  min-width: 40px;
+  text-align: center;
+  user-select: none;
+}
+
+/* ─── Main Area ─── */
+
+.main-area {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ─── Score Editor ─── */
+
+.score-editor {
+  flex: 1;
+  overflow: auto;
+  background-color: #f5f5f5;
+  position: relative;
+}
+
+.score-editor-canvas-wrapper {
+  transform-origin: top left;
+  min-width: fit-content;
+  min-height: fit-content;
+  padding: 20px;
+  background-color: #ffffff;
+  margin: 16px;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* ─── Property Panel ─── */
+
+.property-panel {
+  width: 250px;
+  min-width: 250px;
+  background-color: #181825;
+  border-left: 1px solid #313244;
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: width 0.2s, min-width 0.2s, padding 0.2s;
+}
+
+.property-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-left: none;
+}
+
+.property-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #313244;
+}
+
+.property-panel-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cba6f7;
+}
+
+.property-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #a6adc8;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.property-panel-toggle:hover {
+  background-color: #313244;
+}
+
+.property-panel-content {
+  padding: 12px;
+}
+
+.property-section {
+  margin-bottom: 16px;
+}
+
+.property-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a6adc8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.property-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.property-label {
+  font-size: 12px;
+  color: #a6adc8;
+}
+
+.property-value {
+  font-size: 12px;
+  color: #cdd6f4;
+  font-weight: 500;
+}
+
+.property-input {
+  width: 60px;
+  padding: 2px 6px;
+  border: 1px solid #313244;
+  border-radius: 3px;
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+  font-size: 12px;
+  text-align: center;
+}
+
+.property-input:focus {
+  outline: none;
+  border-color: #cba6f7;
+}
+
+.property-select {
+  padding: 2px 6px;
+  border: 1px solid #313244;
+  border-radius: 3px;
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+  font-size: 12px;
+}
+
+.property-select:focus {
+  outline: none;
+  border-color: #cba6f7;
+}
+
+.articulation-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.articulation-toggle {
+  padding: 3px 6px;
+  border: 1px solid #313244;
+  border-radius: 3px;
+  background: transparent;
+  color: #a6adc8;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.articulation-toggle:hover {
+  border-color: #45475a;
+  color: #cdd6f4;
+}
+
+.articulation-toggle.active {
+  background-color: #cba6f7;
+  border-color: #cba6f7;
+  color: #1e1e2e;
+}
+
+.no-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: #585b70;
+  font-size: 13px;
+}
