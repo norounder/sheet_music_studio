@@ -467,11 +467,21 @@ export class ScoreRenderer {
 
       const vexVoices: Voice[] = [];
 
-      const isMultiVoice = staffVoices.size > 1;
+      // 다성부 판별: 같은 보표에 실제로 독립적인 음표를 가진 voice가 2개 이상인 경우
+      // (쉼표만 있는 voice는 제외)
+      const activeVoiceCount = [...staffVoices.values()].filter(
+        els => els.some(e => e.type === 'note'),
+      ).length;
+      const isMultiVoice = activeVoiceCount > 1;
+
+      // 같은 보표 내 voice를 정렬하여 첫 번째 voice를 stem-up, 나머지를 stem-down으로 처리
+      const sortedVoiceNums = [...staffVoices.keys()].sort((a, b) => a - b);
+      const firstVoiceNum = sortedVoiceNums[0];
 
       for (const [voiceNum, elements] of staffVoices) {
+        const isFirstVoice = voiceNum === firstVoiceNum;
         const result = this.convertElementsToVexNotes(
-          elements, staffNum, voiceNum, measureIndex, measure, currentKeyFifths, isMultiVoice, currentClefs, lineIndex,
+          elements, staffNum, voiceNum, isFirstVoice, measureIndex, measure, currentKeyFifths, isMultiVoice, currentClefs, lineIndex,
         );
         const { vexNotes, beams, tuplets, rendered } = result;
         if (result.hasExplicitBeamData) hasExplicitBeamData = true;
@@ -551,6 +561,7 @@ export class ScoreRenderer {
     elements: MeasureElement[],
     staffNum: number,
     voiceNum: number,
+    isFirstVoice: boolean,
     measureIndex: number,
     measure: Measure,
     currentKeyFifths: number,
@@ -655,7 +666,7 @@ export class ScoreRenderer {
         }
       } else if (el.type === 'rest') {
         flushChord();
-        const sn = this.createRestNote(el, voiceNum, measure, isMultiVoice, staffNum, currentClefs);
+        const sn = this.createRestNote(el, voiceNum, isFirstVoice, measure, isMultiVoice, staffNum, currentClefs);
         if (sn) {
           attachPendingGraceNotes(sn);
           vexNotes.push(sn);
@@ -697,6 +708,7 @@ export class ScoreRenderer {
     element: NoteElement,
     keys: string[],
     voiceNum: number,
+    isFirstVoice: boolean,
     measure: Measure,
     currentKeyFifths: number,
     isMultiVoice: boolean,
@@ -719,11 +731,11 @@ export class ScoreRenderer {
         clef,
       };
 
-      // 줄기 방향: 다성부면 voice 1=위, voice 2=아래. 단일 성부면 VexFlow 자동
+      // 줄기 방향: MusicXML stem 우선, 다성부면 첫 번째 voice=위 / 나머지=아래
       if (element.stem) {
         noteParams.stemDirection = element.stem === 'down' ? -1 : 1;
       } else if (isMultiVoice) {
-        noteParams.stemDirection = voiceNum <= 1 ? 1 : -1;
+        noteParams.stemDirection = isFirstVoice ? 1 : -1;
       }
       // 단일 성부: stemDirection 미설정 → VexFlow가 음높이 기반으로 자동 결정
 
@@ -791,6 +803,7 @@ export class ScoreRenderer {
   private createRestNote(
     element: RestElement,
     voiceNum: number,
+    isFirstVoice: boolean,
     measure: Measure,
     isMultiVoice: boolean,
     staffNum: number,
@@ -806,13 +819,13 @@ export class ScoreRenderer {
         // MusicXML에서 지정한 위치 사용
         restKey = `${element.displayStep.toLowerCase()}/${element.displayOctave}`;
       } else if (isMultiVoice) {
-        // 다성부: 충돌 방지를 위해 voice별 오프셋
+        // 다성부: 충돌 방지를 위해 첫 번째 voice는 위, 나머지는 아래
         if (clef === 'bass') {
-          restKey = voiceNum <= 1 ? 'f/3' : 'b/2';
+          restKey = isFirstVoice ? 'f/3' : 'b/2';
         } else if (clef === 'alto' || clef === 'tenor') {
-          restKey = voiceNum <= 1 ? 'd/4' : 'f/3';
+          restKey = isFirstVoice ? 'd/4' : 'f/3';
         } else {
-          restKey = voiceNum <= 1 ? 'd/5' : 'f/4';
+          restKey = isFirstVoice ? 'd/5' : 'f/4';
         }
       } else {
         // 단일 성부: 오선 중앙
