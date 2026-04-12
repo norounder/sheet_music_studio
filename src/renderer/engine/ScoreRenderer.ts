@@ -46,6 +46,7 @@ import {
   Repetition,
   StaveText,
   ChordSymbol,
+  StaveHairpin,
   type RenderContext,
 } from 'vexflow';
 
@@ -137,6 +138,7 @@ export class ScoreRenderer {
   private renderer: Renderer | null = null;
   private context: RenderContext | null = null;
   private renderedNotes: RenderedNote[] = [];
+  private systemHeight: number = 0;
 
   constructor(container: HTMLElement, config?: Partial<RenderConfig>) {
     this.container = container;
@@ -153,8 +155,20 @@ export class ScoreRenderer {
 
     if (!this.context) return;
 
+    // Calculate system height (all parts stacked per system line)
+    const { staveSpacing } = this.config;
+    const partSpacing = 40;
+    let totalStaves = 0;
+    for (const part of scoreData.parts) totalStaves += part.staves || 1;
+    this.systemHeight = totalStaves * staveSpacing
+      + Math.max(0, scoreData.parts.length - 1) * partSpacing;
+
+    // Render each part with its vertical offset within the system
+    let partYOffset = 0;
     for (const part of scoreData.parts) {
-      this.renderPart(part);
+      this.renderPart(part, partYOffset);
+      const numStaves = part.staves || 1;
+      partYOffset += numStaves * staveSpacing + partSpacing;
     }
 
     // SVG 요소에 data-element-id 속성 부착 (클릭 선택용)
@@ -202,17 +216,21 @@ export class ScoreRenderer {
 
   private estimateHeight(scoreData: ScoreData): number {
     const { measuresPerLine, staveSpacing, systemSpacing, staveStartY } = this.config;
-    // 가장 마디가 많은 파트 기준
+    const partSpacing = 40;
+
+    // Total staves across all parts
+    let totalStaves = 0;
     let maxMeasures = 0;
-    let maxStaves = 1;
     for (const part of scoreData.parts) {
-      if (part.measures.length > maxMeasures) {
-        maxMeasures = part.measures.length;
-        maxStaves = part.staves || 1;
-      }
+      totalStaves += part.staves || 1;
+      maxMeasures = Math.max(maxMeasures, part.measures.length);
     }
+    const totalPartSpacing = Math.max(0, scoreData.parts.length - 1) * partSpacing;
+
+    // Height per system line = all parts' staves + spacing between parts
+    const systemHeight = totalStaves * staveSpacing + totalPartSpacing + systemSpacing;
     const numLines = Math.ceil(maxMeasures / measuresPerLine);
-    return staveStartY + numLines * (maxStaves * staveSpacing + systemSpacing) + 100;
+    return staveStartY + numLines * systemHeight + 100;
   }
 
   private estimateTotalWidth(): number {
@@ -223,7 +241,7 @@ export class ScoreRenderer {
 
   // ─── Part 렌더링 ───
 
-  private renderPart(part: Part): void {
+  private renderPart(part: Part, partYOffset: number = 0): void {
     if (!this.context) return;
 
     const measures = part.measures;
@@ -235,6 +253,10 @@ export class ScoreRenderer {
 
     // 렌더링된 음표 추적 (타이/슬러 연결 및 클릭 선택용)
     const allRenderedNotes: RenderedNote[] = [];
+
+    // Wedge(hairpin) 추적: start note를 저장하고 stop 시 그리기
+    let wedgeStartNote: StaveNote | null = null;
+    let wedgeType: 'crescendo' | 'diminuendo' | null = null;
 
     // 현재 조표 추적 (마디 간 전파)
     let currentKeyFifths = 0;
@@ -274,7 +296,7 @@ export class ScoreRenderer {
         x = staveStartX + (staveWidth + firstMeasureExtra) + (posInLine - 1) * staveWidth;
       }
 
-      const baseY = staveStartY + lineIndex * (numStaves * staveSpacing + systemSpacing);
+      const baseY = staveStartY + partYOffset + lineIndex * (this.systemHeight + systemSpacing);
 
       // 각 보표(staff) 렌더링
       const staves: Stave[] = [];
@@ -319,9 +341,34 @@ export class ScoreRenderer {
       // Direction 렌더링 (다이나믹, 템포 등)
       this.renderDirections(measure.directions, staves);
 
+      // Wedge(hairpin) 추적: start에서 첫 음표 저장, stop에서 마지막 음표로 그리기
+      const firstVoiceNotes = measureNotes.vexNotesByVoice[0];
+      for (const dir of measure.directions) {
+        if (dir.type.kind === 'wedge') {
+          if (dir.type.value.type === 'crescendo' || dir.type.value.type === 'diminuendo') {
+            wedgeStartNote = firstVoiceNotes?.[0] ?? null;
+            wedgeType = dir.type.value.type;
+          } else if (dir.type.value.type === 'stop' && wedgeStartNote && wedgeType) {
+            const endNote = firstVoiceNotes?.[firstVoiceNotes.length - 1] ?? firstVoiceNotes?.[0];
+            if (endNote) {
+              try {
+                const hairpin = new StaveHairpin(
+                  { firstNote: wedgeStartNote, lastNote: endNote },
+                  wedgeType === 'crescendo' ? StaveHairpin.type.CRESC : StaveHairpin.type.DECRESC,
+                );
+                hairpin.setContext(this.context!).setPosition(4).draw(); // position 4 = below
+              } catch { /* skip hairpin rendering errors */ }
+            }
+            wedgeStartNote = null;
+            wedgeType = null;
+          }
+        }
+      }
+
       // Harmony 렌더링 (코드 네임)
       if (measure.harmonies?.length) {
-        this.renderHarmonies(measure.harmonies, measureNotes.vexNotesByVoice, staves);
+        const measureRendered = allRenderedNotes.filter(rn => rn.measureIndex === mIdx);
+        this.renderHarmonies(measure.harmonies, measureNotes.vexNotesByVoice, measureRendered);
       }
 
       // 볼타 괄호 렌더링
@@ -1168,19 +1215,32 @@ export class ScoreRenderer {
   private renderHarmonies(
     harmonies: Harmony[],
     vexNotesByVoice: StaveNote[][],
-    staves: Stave[],
+    renderedNotes: RenderedNote[],
   ): void {
     if (!this.context) return;
 
-    // Get the first voice's notes to attach chord symbols
     const firstVoiceNotes = vexNotesByVoice[0];
     if (!firstVoiceNotes || firstVoiceNotes.length === 0) return;
 
     for (let hIdx = 0; hIdx < harmonies.length; hIdx++) {
       const h = harmonies[hIdx];
-      // Attach to the note closest to this harmony's position
-      const noteIdx = Math.min(hIdx, firstVoiceNotes.length - 1);
-      const targetNote = firstVoiceNotes[noteIdx];
+
+      // Find the target note by offset position, or fall back to sequential
+      let targetNote: StaveNote = firstVoiceNotes[Math.min(hIdx, firstVoiceNotes.length - 1)];
+
+      if (h.offset != null && renderedNotes.length > 0) {
+        // Find the note closest to this offset (cumulative divisions)
+        let cumDivs = 0;
+        for (const rn of renderedNotes) {
+          if (rn.voice === 1 || renderedNotes.filter(r => r.voice === 1).length === 0) {
+            if (cumDivs >= h.offset) {
+              targetNote = rn.staveNote;
+              break;
+            }
+            cumDivs += rn.element.duration.divisions;
+          }
+        }
+      }
 
       try {
         const rootAlter = h.root.alter
