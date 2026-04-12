@@ -307,13 +307,25 @@ export class ScoreRenderer {
         staves.push(stave);
       }
 
-      // 마디 번호 표시 (각 줄 첫 마디의 첫 보표 위)
-      if (this.config.showMeasureNumbers && isFirstInLine && staves[0]) {
+      // 마디 번호 표시 (각 줄 첫 마디의 첫 보표 위, 첫 파트만)
+      if (this.config.showMeasureNumbers && isFirstInLine && staves[0] && partYOffset === 0) {
         const measureNum = measure.number ?? mIdx + 1;
         const ctx = this.context as RenderContext;
         ctx.save();
         ctx.setFont('Arial', 10, 'normal');
         ctx.fillText(String(measureNum), x + 4, staves[0].getYForLine(0) - 10);
+        ctx.restore();
+      }
+
+      // 파트 이름 표시 (각 줄 첫 마디의 첫 보표 왼쪽)
+      if (isFirstInLine && staves[0] && part.name) {
+        const ctx = this.context as RenderContext;
+        ctx.save();
+        ctx.setFont('Arial', 10, 'normal');
+        const nameY = numStaves > 1
+          ? (staves[0].getYForLine(2) + staves[staves.length - 1].getYForLine(2)) / 2
+          : staves[0].getYForLine(2);
+        ctx.fillText(part.abbreviation ?? part.name, 2, nameY);
         ctx.restore();
       }
 

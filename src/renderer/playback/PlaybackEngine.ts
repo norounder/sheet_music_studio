@@ -60,15 +60,15 @@ export class PlaybackEngine {
 
       if (!this.synth) {
         this.synth = new Tone.PolySynth(Tone.Synth, {
-          oscillator: { type: 'triangle' },
+          oscillator: { type: 'fatsawtooth', count: 2, spread: 10 },
           envelope: {
-            attack: 0.01,
-            decay: 0.1,
-            sustain: 0.4,
-            release: 0.8,
+            attack: 0.02,
+            decay: 0.15,
+            sustain: 0.3,
+            release: 1.0,
           },
         }).toDestination();
-        this.synth.volume.value = -6;
+        this.synth.volume.value = -10;
       }
 
       if (this.state === 'paused') {
