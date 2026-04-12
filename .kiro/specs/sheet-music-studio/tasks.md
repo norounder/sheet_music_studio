@@ -120,14 +120,14 @@ Electron + React + TypeScript 기반 통합 악보 제작 애플리케이션을 
   - Score Controller를 통한 파일 열기 흐름이 정상 동작하는지 확인
   - 모든 테스트 통과 확인, 문제 발생 시 사용자에게 질문
 
-- [ ] 7. Command Manager 및 Score Editor 편집 기능 구현
-  - [ ] 7.1 Command Manager (Undo/Redo) 구현
+- [x] 7. Command Manager 및 Score Editor 편집 기능 구현
+  - [x] 7.1 Command Manager (Undo/Redo) 구현
     - `ICommandManager` 인터페이스 구현 (execute, undo, redo)
     - `EditCommand` 패턴 구현: 각 명령이 `execute()`와 `undo()` 메서드를 가짐
     - Undo/Redo 스택 관리
     - _요구사항: 2.3_
 
-  - [ ] 7.2 음표/쉼표 편집 명령 구현
+  - [x] 7.2 음표/쉼표 편집 명령 구현
     - `addNote`, `deleteNote`, `modifyNote` 명령 구현
     - `addRest`, `deleteRest` 명령 구현
     - 음높이, 음길이, 아티큘레이션 수정 명령 구현
@@ -135,17 +135,17 @@ Electron + React + TypeScript 기반 통합 악보 제작 애플리케이션을 
     - 편집 결과 실시간 렌더링 반영
     - _요구사항: 2.1, 2.2, 2.5, 8.4_
 
-  - [ ] 7.3 마디 편집 명령 구현
+  - [x] 7.3 마디 편집 명령 구현
     - `addMeasure`, `deleteMeasure`, `copyMeasure`, `pasteMeasure` 명령 구현
     - 조표, 박자표, 음자리표 변경 명령 구현
     - _요구사항: 2.4_
 
-  - [ ] 7.4 가사 편집 기능 구현
+  - [x] 7.4 가사 편집 기능 구현
     - `addLyric`, `modifyLyric`, `deleteLyric` 명령 구현
     - 가사를 해당 음표 아래에 정렬 배치하는 로직
     - _요구사항: 2.6_
 
-  - [ ] 7.5 타이/슬러/아티큘레이션 편집 명령 구현
+  - [x] 7.5 타이/슬러/아티큘레이션 편집 명령 구현
     - `addTie`, `deleteTie`, `addSlur`, `deleteSlur` 명령 구현
     - `addArticulation`, `deleteArticulation` 명령 구현
     - _요구사항: 2.1_
@@ -156,8 +156,8 @@ Electron + React + TypeScript 기반 통합 악보 제작 애플리케이션을 
     - 편집 반응 시간 ≤ 100ms 검증
     - _요구사항: 2.3, 8.4_
 
-- [ ] 8. 파일 저장/내보내기 및 오류 처리 구현
-  - [ ] 8.1 파일 저장/내보내기 다이얼로그 및 오류 처리 구현
+- [x] 8. 파일 저장/내보내기 및 오류 처리 구현
+  - [x] 8.1 파일 저장/내보내기 다이얼로그 및 오류 처리 구현
     - Electron 네이티브 파일 저장 다이얼로그 연동
     - MusicXML 저장 흐름 구현
     - PDF/PNG 내보내기 흐름 구현
@@ -165,8 +165,8 @@ Electron + React + TypeScript 기반 통합 악보 제작 애플리케이션을 
     - 지원하지 않는 파일 형식 오류 처리
     - _요구사항: 4.1, 4.3, 4.4, 4.6, 1.4_
 
-- [ ] 9. Transposer (조 변환) 엔진 구현
-  - [ ] 9.1 규칙 기반 조 변환 로직 구현
+- [x] 9. Transposer (조 변환) 엔진 구현
+  - [x] 9.1 규칙 기반 조 변환 로직 구현
     - `ITransposer.transpose()` 구현: 모든 음표를 지정된 반음 간격만큼 이동
     - 조표(`KeySignature.fifths`) 자동 갱신
     - 임시표(`Pitch.alter`) 변환된 조에 맞게 갱신
@@ -174,24 +174,24 @@ Electron + React + TypeScript 기반 통합 악보 제작 애플리케이션을 
     - `detectKey()`, `getTargetKey()` 구현
     - _요구사항: 3.1, 3.2, 3.4, 7.7_
 
-  - [ ] 9.2 부분 범위 조 변환 구현
+  - [x] 9.2 부분 범위 조 변환 구현
     - `MeasureRange` 기반 선택 범위 조 변환
     - 변환 후 Score_Editor 즉시 시각적 갱신
     - _요구사항: 3.3, 3.5_
 
-  - [ ] 9.3 조 변환 UI 연동
+  - [x] 9.3 조 변환 UI 연동
     - 목표 조 선택 UI (드롭다운 또는 반음 단위 슬라이더)
     - 마디 범위 선택 상태에서 조 변환 요청 흐름
     - Score Controller를 통한 transpose 위임
     - _요구사항: 3.1, 3.3, 3.5_
 
-  - [ ] 9.4 조 변환 왕복(round-trip) 테스트
+  - [x] 9.4 조 변환 왕복(round-trip) 테스트
     - N반음 올린 후 N반음 내리면 원래 Score_Data와 동일한지 검증
     - 다양한 조(장조/단조, 샤프/플랫 조)에 대한 왕복 테스트
     - 100마디 기준 조 변환 시간 ≤ 500ms 검증
     - _요구사항: 3.6, 8.5_
 
-- [ ] 10. 체크포인트 - 편집 및 조 변환 통합 확인
+- [x] 10. 체크포인트 - 편집 및 조 변환 통합 확인
   - MusicXML 열기 → 편집 → 조 변환 → 저장 흐름이 정상 동작하는지 확인
   - 모든 테스트 통과 확인, 문제 발생 시 사용자에게 질문
 
