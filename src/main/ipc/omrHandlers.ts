@@ -131,20 +131,35 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 0,
         });
 
-        let preprocessedPath = filePath;
         const isImage = !isPdfFile(filePath);
+
+        // Preprocess for Audiveris: upscale only (no binarize, Audiveris does its own)
+        let audiverisInputPath = filePath;
+        // Preprocess for SMT++: full pipeline (grayscale, binarize, normalize)
+        let smtInputPath = filePath;
 
         if (isImage && omrConfig.preprocessing.enabled) {
           try {
-            const preprocessResult = await preprocessImage(filePath, tempDir, {
+            // For Audiveris: upscale + sharpen only (preserve original tones)
+            const audPreprocess = await preprocessImage(filePath, path.join(tempDir, 'preproc-aud'), {
+              targetDPI: omrConfig.preprocessing.targetDPI,
+              binarize: false,
+              denoise: false,
+              normalizeContrast: false,
+            });
+            audiverisInputPath = audPreprocess.processedPath;
+
+            // For SMT++: full preprocessing
+            const smtPreprocess = await preprocessImage(filePath, path.join(tempDir, 'preproc-smt'), {
               targetDPI: omrConfig.preprocessing.targetDPI,
               binarize: omrConfig.preprocessing.binarize,
               denoise: omrConfig.preprocessing.denoise,
               normalizeContrast: omrConfig.preprocessing.normalizeContrast,
             });
-            preprocessedPath = preprocessResult.processedPath;
+            smtInputPath = smtPreprocess.processedPath;
           } catch {
-            preprocessedPath = filePath;
+            audiverisInputPath = filePath;
+            smtInputPath = filePath;
           }
         }
 
@@ -165,7 +180,7 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
             (async () => {
               const config = await getAudiverisConfig();
               const result = await runAudiveris({
-                inputPath: filePath, // Audiveris handles PDF natively
+                inputPath: isImage ? audiverisInputPath : filePath, // Use upscaled for images, original for PDF
                 outputDir: path.join(tempDir, 'audiveris'),
                 config,
                 onProgress: (progress) => {
@@ -189,7 +204,7 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
             (async () => {
               try {
                 const smtResult = await runSMT({
-                  imagePath: preprocessedPath,
+                  imagePath: smtInputPath,
                   modelManager,
                   onProgress: (progress) => {
                     reportProgress(mainWindow, {
