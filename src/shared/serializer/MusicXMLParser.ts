@@ -64,10 +64,15 @@ function nextId(prefix: string): string {
 
 // ─── DOM helpers ───
 
-/** Get text content of a direct child element */
+/** Get text content of a direct child element (direct children only, not descendants) */
 function getChildText(el: Element, tag: string): string | null {
-  const child = el.getElementsByTagName(tag)[0];
-  return child?.textContent?.trim() ?? null;
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const child = el.childNodes[i];
+    if (child.nodeType === 1 && (child as Element).tagName === tag) {
+      return (child as Element).textContent?.trim() ?? null;
+    }
+  }
+  return null;
 }
 
 /** Get numeric value of a direct child element */

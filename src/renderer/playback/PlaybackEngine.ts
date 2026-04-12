@@ -47,39 +47,48 @@ export class PlaybackEngine {
     this.totalDuration = getTotalDuration(this.events);
   }
 
+  private starting = false;
+
   /** Start or resume playback */
   async play(): Promise<void> {
-    if (this.state === 'playing') return;
+    if (this.state === 'playing' || this.starting) return;
+    this.starting = true;
 
-    // Ensure AudioContext is started (browser requirement)
-    await Tone.start();
+    try {
+      // Ensure AudioContext is started (browser requirement)
+      await Tone.start();
 
-    if (!this.synth) {
-      this.synth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'triangle' },
-        envelope: {
-          attack: 0.01,
-          decay: 0.1,
-          sustain: 0.4,
-          release: 0.8,
-        },
-      }).toDestination();
-      this.synth.volume.value = -6; // Slightly reduce volume
+      if (!this.synth) {
+        this.synth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle' },
+          envelope: {
+            attack: 0.01,
+            decay: 0.1,
+            sustain: 0.4,
+            release: 0.8,
+          },
+        }).toDestination();
+        this.synth.volume.value = -6;
+      }
+
+      if (this.state === 'paused') {
+        Tone.getTransport().start();
+      } else {
+        // Start from beginning — cancel without intermediate state notification
+        Tone.getTransport().stop();
+        Tone.getTransport().cancel();
+        this.scheduledIds = [];
+        this.stopPositionTracking();
+        this.scheduleEvents();
+        Tone.getTransport().start();
+      }
+
+      this.state = 'playing';
+      this.notifyState();
+      this.startPositionTracking();
+    } finally {
+      this.starting = false;
     }
-
-    if (this.state === 'paused') {
-      // Resume from paused position
-      Tone.getTransport().start();
-    } else {
-      // Start from beginning
-      this.stop();
-      this.scheduleEvents();
-      Tone.getTransport().start();
-    }
-
-    this.state = 'playing';
-    this.notifyState();
-    this.startPositionTracking();
   }
 
   /** Pause playback */
@@ -196,6 +205,6 @@ export class PlaybackEngine {
   }
 
   private notifyState(): void {
-    for (const cb of this.stateCallbacks) this.state && cb(this.state);
+    for (const cb of this.stateCallbacks) cb(this.state);
   }
 }

@@ -319,7 +319,9 @@ const App: React.FC = () => {
     playbackRef.current.loadScore(scoreData, tempo);
   }, [scoreData, tempo]);
 
-  const handlePlay = useCallback(() => playbackRef.current.play(), []);
+  const handlePlay = useCallback(() => {
+    playbackRef.current.play().catch((err) => console.error('Playback error:', err));
+  }, []);
   const handlePause = useCallback(() => playbackRef.current.pause(), []);
   const handleStop = useCallback(() => playbackRef.current.stop(), []);
   const handleTempoChange = useCallback((bpm: number) => {
