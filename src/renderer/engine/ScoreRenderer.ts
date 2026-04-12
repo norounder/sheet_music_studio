@@ -307,27 +307,8 @@ export class ScoreRenderer {
         this.renderEnding(measure.barline.ending, staves[0]);
       }
 
-      // 빔 렌더링: 항상 자동 빔 생성을 사용 (VexFlow가 박자/duration 기반으로 빔 그룹 결정)
-      // MusicXML의 명시적 빔 데이터는 추후 정밀 제어에 활용 가능
-      const NON_BEAMABLE = new Set(['w', 'h', 'wr', 'hr']);
-      for (const noteGroup of measureNotes.vexNotesByVoice) {
-        try {
-          const beamable = noteGroup.filter(
-            (n) => !NON_BEAMABLE.has(n.getDuration() + (n.isRest() ? 'r' : '')),
-          );
-          if (beamable.length >= 2) {
-            const autoBeams = Beam.generateBeams(beamable, {
-              maintainStemDirections: true,
-              beamRests: true,
-            });
-            for (const beam of autoBeams) {
-              beam.setContext(this.context!).draw();
-            }
-          }
-        } catch (e) {
-          console.warn('Beam generation failed:', e);
-        }
-      }
+      // 빔 렌더링은 renderMeasureElements() 내부에서 draw() 전에 수행됨
+      // (Beam 생성 → 음표 flag 자동 숨김 → 음표 draw → 빔 draw)
 
       // 잇단음표 렌더링
       for (const tupletGroup of measureNotes.tupletGroups) {
@@ -452,6 +433,7 @@ export class ScoreRenderer {
       if (!stave) continue;
 
       const vexVoices: Voice[] = [];
+      const staffVexNotesByVoice: StaveNote[][] = [];
 
       // 다성부 판별: 같은 보표에 실제로 독립적인 음표를 가진 voice가 2개 이상인 경우
       // (쉼표만 있는 voice는 제외)
@@ -478,6 +460,7 @@ export class ScoreRenderer {
 
         // 빔 자동 생성용 음표 그룹 수집
         vexNotesByVoice.push([...vexNotes]);
+        staffVexNotesByVoice.push([...vexNotes]);
 
         // Voice 생성 (softmax 모드로 유연한 타이밍 허용)
         const beats = measure.attributes?.timeSignature?.beats ?? 4;
@@ -498,8 +481,37 @@ export class ScoreRenderer {
           new Formatter()
             .joinVoices(vexVoices)
             .format(vexVoices, availableWidth, { alignRests: true });
+
+          // 빔 생성: draw() 전에 실행하여 beamed 음표의 flag를 자동 숨김
+          // (Beam 생성자가 음표의 renderFlag = false 설정)
+          const NON_BEAMABLE = new Set(['w', 'h']);
+          const staffBeams: Beam[] = [];
+          for (const noteGroup of staffVexNotesByVoice) {
+            try {
+              // 쉼표 제외, 온음표/2분음표 제외 → 8분음표 이하만 beam 대상
+              const beamable = noteGroup.filter(
+                (n) => !n.isRest() && !NON_BEAMABLE.has(n.getDuration()),
+              );
+              if (beamable.length >= 2) {
+                const autoBeams = Beam.generateBeams(beamable, {
+                  maintainStemDirections: true,
+                  beamRests: false,
+                });
+                staffBeams.push(...autoBeams);
+              }
+            } catch (e) {
+              console.warn('Beam generation failed:', e);
+            }
+          }
+
+          // 음표 draw (flag 없이 렌더링됨)
           for (const v of vexVoices) {
             v.draw(this.context!, stave);
+          }
+
+          // 빔 draw
+          for (const beam of staffBeams) {
+            beam.setContext(this.context!).draw();
           }
         } catch (e) {
           console.warn('[ScoreRenderer] format/draw failed:', { measureIndex, staffNum, error: e });
