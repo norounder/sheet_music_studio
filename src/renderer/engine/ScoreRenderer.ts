@@ -281,8 +281,8 @@ export class ScoreRenderer {
         staves.push(stave);
       }
 
-      // 마디 번호 표시 (첫 번째 보표 위)
-      if (this.config.showMeasureNumbers && staves[0]) {
+      // 마디 번호 표시 (각 줄 첫 마디의 첫 보표 위)
+      if (this.config.showMeasureNumbers && isFirstInLine && staves[0]) {
         const measureNum = measure.number ?? mIdx + 1;
         const ctx = this.context as RenderContext;
         ctx.save();

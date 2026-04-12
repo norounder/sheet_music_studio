@@ -9,8 +9,9 @@ import React, { useState } from 'react';
 import type { NoteElement, RestElement, NoteType, PitchStep, Articulation } from '@shared/types';
 
 export interface SelectedElement {
-  type: 'note' | 'rest' | 'measure';
+  type: 'note' | 'rest' | 'measure' | 'multi';
   element?: NoteElement | RestElement;
+  elements?: (NoteElement | RestElement)[];
   measureIndex?: number;
 }
 
@@ -328,6 +329,87 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
                 title="Convert rest to note"
               >
                 Convert to Note
+              </button>
+            </div>
+          </>
+        ) : selected.type === 'multi' && selected.elements ? (
+          <>
+            <div className="property-section">
+              <div className="property-section-title">Multi Selection</div>
+              <div className="property-row">
+                <span className="property-label">Selected</span>
+                <span className="property-value">{selected.elements.length} elements</span>
+              </div>
+              <div className="property-row">
+                <span className="property-label">Notes</span>
+                <span className="property-value">
+                  {selected.elements.filter(e => e.type === 'note').length}
+                </span>
+              </div>
+              <div className="property-row">
+                <span className="property-label">Rests</span>
+                <span className="property-value">
+                  {selected.elements.filter(e => e.type === 'rest').length}
+                </span>
+              </div>
+            </div>
+
+            {/* Batch stem direction */}
+            {selected.elements.some(e => e.type === 'note') && (
+              <div className="property-section">
+                <div className="property-section-title">Batch Stem</div>
+                <div className="property-row">
+                  <span className="property-label">Direction</span>
+                  <select
+                    className="property-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        onPropertyChange?.('multi.stem', val === 'auto' ? undefined : val);
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Apply to all...</option>
+                    <option value="auto">Auto</option>
+                    <option value="up">Up</option>
+                    <option value="down">Down</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Batch duration */}
+            <div className="property-section">
+              <div className="property-section-title">Batch Duration</div>
+              <div className="property-row">
+                <span className="property-label">Type</span>
+                <select
+                  className="property-select"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      onPropertyChange?.('multi.duration.noteType', val);
+                    }
+                  }}
+                >
+                  <option value="" disabled>Apply to all...</option>
+                  {NOTE_TYPES.map((nt) => (
+                    <option key={nt.value} value={nt.value}>{nt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Batch delete */}
+            <div className="property-section">
+              <button
+                className="property-action-btn danger"
+                onClick={() => onPropertyChange?.('multi.delete', null)}
+                title="Delete all selected notes"
+              >
+                Delete All Selected
               </button>
             </div>
           </>

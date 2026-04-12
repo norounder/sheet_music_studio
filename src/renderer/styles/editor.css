@@ -104,6 +104,8 @@
   overflow: auto;
   background-color: #f5f5f5;
   position: relative;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .score-editor-canvas-wrapper {
@@ -305,6 +307,16 @@
 
 [data-element-id]:hover {
   filter: drop-shadow(0 0 2px #a78bfa);
+}
+
+/* ─── Drag Selection Rectangle ─── */
+
+.selection-rect {
+  position: absolute;
+  border: 1px solid #cba6f7;
+  background-color: rgba(203, 166, 247, 0.12);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .no-selection {

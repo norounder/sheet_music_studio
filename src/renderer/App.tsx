@@ -120,7 +120,26 @@ const App: React.FC = () => {
 
       // Re-resolve selection by ID
       const sel = selectedRef.current;
-      if (sel?.element) {
+      if (sel?.type === 'multi' && sel.elements) {
+        // 다중 선택 re-resolve
+        const resolved: (NoteElement | RestElement)[] = [];
+        for (const elem of sel.elements) {
+          const loc = findElementLocation(newData, elem.id);
+          if (loc) {
+            const el = newData.parts[loc.partIndex].measures[loc.measureIndex].elements[loc.elementIndex];
+            if (el.type === 'note' || el.type === 'rest') {
+              resolved.push(el as NoteElement | RestElement);
+            }
+          }
+        }
+        if (resolved.length > 1) {
+          setSelected({ type: 'multi', elements: resolved });
+        } else if (resolved.length === 1) {
+          setSelected({ type: resolved[0].type as 'note' | 'rest', element: resolved[0] });
+        } else {
+          setSelected(null);
+        }
+      } else if (sel?.element) {
         const loc = findElementLocation(newData, sel.element.id);
         if (loc) {
           const el =
@@ -133,7 +152,6 @@ const App: React.FC = () => {
             setSelected({ type: 'rest', element: el as RestElement });
           }
         } else {
-          // Element was removed (e.g., deleted note replaced with rest)
           setSelected(null);
         }
       }
@@ -218,8 +236,36 @@ const App: React.FC = () => {
     (property: string, value: unknown) => {
       const currentScoreData = controllerRef.current.getScoreData();
       const sel = selectedRef.current;
-      if (!currentScoreData || !sel?.element) return;
+      if (!currentScoreData) return;
 
+      // ─── Multi-selection batch operations ───
+      if (property.startsWith('multi.') && sel?.type === 'multi' && sel.elements) {
+        const batchProp = property.slice(6); // 'multi.stem' → 'stem'
+        try {
+          for (const elem of sel.elements) {
+            const sd = controllerRef.current.getScoreData();
+            if (!sd) break;
+            let cmd;
+            if (batchProp === 'stem' && elem.type === 'note') {
+              cmd = createModifyNoteCommand(sd, elem.id, {
+                stem: value as NoteElement['stem'],
+              });
+            } else if (batchProp === 'duration.noteType') {
+              cmd = createModifyDurationWithFillCommand(sd, elem.id, {
+                noteType: value as NoteType,
+              });
+            } else if (batchProp === 'delete' && elem.type === 'note') {
+              cmd = createDeleteNoteWithRestCommand(sd, elem.id);
+            }
+            if (cmd) controllerRef.current.executeCommand(cmd);
+          }
+        } catch (err) {
+          console.error('Batch property change error:', err);
+        }
+        return;
+      }
+
+      if (!sel?.element) return;
       const elementId = sel.element.id;
 
       try {
