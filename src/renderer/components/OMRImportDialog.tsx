@@ -19,11 +19,25 @@ export interface OMRImportDialogProps {
 
 type DialogState = 'processing' | 'error';
 
-const STAGE_LABELS: Record<OMRProgress['stage'], string> = {
-  preprocessing: 'Preprocessing',
-  inference: 'Recognizing',
-  postprocessing: 'Finalizing',
-};
+/** Map stage + percent to more detailed progress labels */
+function getStageLabel(stage: OMRProgress['stage'], percent: number): string {
+  if (stage === 'preprocessing') {
+    return 'Preparing image...';
+  }
+  if (stage === 'inference') {
+    if (percent < 25) return 'Loading models...';
+    if (percent < 40) return 'Analyzing staff lines...';
+    if (percent < 55) return 'Detecting notes & symbols...';
+    if (percent < 70) return 'Recognizing rhythm...';
+    return 'Processing chords & text...';
+  }
+  if (stage === 'postprocessing') {
+    if (percent < 85) return 'Merging results...';
+    if (percent < 95) return 'Verifying music theory...';
+    return 'Building score...';
+  }
+  return 'Processing...';
+}
 
 const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
   onComplete,
@@ -38,7 +52,17 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
     percent: 0,
   });
   const [errorMessage, setErrorMessage] = useState('');
+  const [elapsedSec, setElapsedSec] = useState(0);
   const invokedRef = useRef(false);
+  const startTimeRef = useRef(Date.now());
+
+  // Elapsed time counter
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Subscribe to progress events
   useEffect(() => {
@@ -111,7 +135,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
         <div style={{ margin: '16px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ color: '#cdd6f4', fontSize: 13 }}>
-              {STAGE_LABELS[progress.stage]}
+              {getStageLabel(progress.stage, progress.percent)}
             </span>
             <span style={{ color: '#a6adc8', fontSize: 13 }}>
               {progress.totalPages > 1
@@ -141,7 +165,10 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
             />
           </div>
 
-          <div style={{ textAlign: 'right', marginTop: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            <span style={{ color: '#585b70', fontSize: 12 }}>
+              {elapsedSec}s
+            </span>
             <span style={{ color: '#a6adc8', fontSize: 12 }}>
               {progress.percent}%
             </span>

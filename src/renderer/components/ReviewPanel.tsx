@@ -6,7 +6,7 @@
  */
 
 import React, { useMemo } from 'react';
-import type { ReviewState, ReviewItem } from '../../shared/types/review';
+import type { ReviewState, ReviewItem, ReviewReason } from '../../shared/types/review';
 
 export interface ReviewPanelProps {
   reviewState: ReviewState;
@@ -44,6 +44,67 @@ const SYMBOL_LABELS: Record<string, string> = {
   lyric: 'Lyric',
   unknown: 'Unknown',
 };
+
+/** Convert excess divisions to readable rhythm value */
+function divisionsToRhythm(divisions: number, baseDivisions: number = 4): string {
+  const ratio = Math.abs(divisions) / baseDivisions;
+  if (ratio >= 4) return `${ratio / 4} whole note(s)`;
+  if (ratio >= 2) return `${ratio / 2} half note(s)`;
+  if (ratio >= 1) return `${ratio} quarter note(s)`;
+  if (ratio >= 0.5) return `${ratio * 2} eighth note(s)`;
+  return `${ratio * 4} 16th note(s)`;
+}
+
+/** Generate human-readable diagnostic message from ReviewReason */
+function getReasonMessage(reason: ReviewReason | undefined): string | null {
+  if (!reason) return null;
+
+  switch (reason.type) {
+    case 'rhythm-mismatch': {
+      const direction = reason.excessDivisions > 0 ? 'too long' : 'too short';
+      const amount = divisionsToRhythm(reason.excessDivisions);
+      return `Voice ${reason.voice}: ${amount} ${direction}`;
+    }
+    case 'out-of-range':
+      return `Pitch out of range for this clef (MIDI ${reason.midi})`;
+    case 'grace-note':
+      return 'Grace notes are often misrecognized';
+    case 'short-note':
+      return `Very short note (${reason.noteType}) — high error rate`;
+    case 'double-accidental':
+      return `Double ${reason.alter > 0 ? 'sharp' : 'flat'} — unusual, verify`;
+    case 'tuplet':
+      return 'Tuplet grouping may be incorrect';
+    case 'tie-invalid':
+      return `Invalid tie: ${reason.description}`;
+    case 'voice-crossing':
+      return 'Voice crossing detected — voices may be swapped';
+    case 'lyric-gap':
+      return 'Missing lyric syllable — expected text under this note';
+    case 'repeat-unmatched':
+      return 'Repeat sign without matching pair';
+    case 'ensemble-conflict':
+      return `Engines disagree: ${reason.description}`;
+  }
+}
+
+/** Icon for each reason type */
+function getReasonIcon(reason: ReviewReason | undefined): string {
+  if (!reason) return '?';
+  switch (reason.type) {
+    case 'rhythm-mismatch': return '♩';
+    case 'out-of-range': return '↕';
+    case 'grace-note': return '♪';
+    case 'short-note': return '♬';
+    case 'double-accidental': return '♯';
+    case 'tuplet': return '3';
+    case 'tie-invalid': return '⌒';
+    case 'voice-crossing': return '✕';
+    case 'lyric-gap': return 'A';
+    case 'repeat-unmatched': return '𝄇';
+    case 'ensemble-conflict': return '⚡';
+  }
+}
 
 const ReviewPanel: React.FC<ReviewPanelProps> = ({
   reviewState,
@@ -123,6 +184,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: '#cdd6f4', fontSize: 13, fontWeight: 600 }}>
+              <span style={{ marginRight: 6 }}>{getReasonIcon(currentItem.reason)}</span>
               {SYMBOL_LABELS[conf.type] ?? conf.type}
             </span>
             <span style={{ color: confColor, fontSize: 13, fontWeight: 600 }}>
@@ -133,6 +195,24 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
             Measure {currentItem.measureIndex + 1}
           </div>
         </div>
+
+        {/* Diagnostic reason */}
+        {currentItem.reason && (
+          <div
+            style={{
+              padding: '8px 10px',
+              backgroundColor: '#1e1e2e',
+              borderLeft: `3px solid ${confColor}`,
+              borderRadius: '0 4px 4px 0',
+              marginBottom: 12,
+              fontSize: 12,
+              color: '#bac2de',
+              lineHeight: 1.4,
+            }}
+          >
+            {getReasonMessage(currentItem.reason)}
+          </div>
+        )}
 
         {/* Confidence bar */}
         <div
