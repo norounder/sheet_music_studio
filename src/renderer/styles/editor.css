@@ -264,6 +264,40 @@
   color: #1e1e2e;
 }
 
+/* ─── Playback ─── */
+
+.toolbar-btn.active {
+  background-color: #cba6f7;
+  color: #1e1e2e;
+}
+
+.tempo-input {
+  padding: 2px 4px;
+  border: 1px solid #313244;
+  border-radius: 3px;
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+  font-size: 12px;
+  text-align: center;
+  -webkit-app-region: no-drag;
+}
+
+.tempo-input:focus {
+  outline: none;
+  border-color: #cba6f7;
+}
+
+/* ─── Playback Position Highlight ─── */
+
+.note-playing {
+  filter: drop-shadow(0 0 6px #f9e2af);
+}
+
+.note-playing * {
+  fill: #f9e2af;
+  stroke: #f9e2af;
+}
+
 /* ─── Property Action Buttons ─── */
 
 .property-action-btn {
@@ -317,6 +351,97 @@
   background-color: rgba(203, 166, 247, 0.12);
   pointer-events: none;
   z-index: 10;
+}
+
+/* ─── Dialog ─── */
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog-content {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 300px;
+  max-width: 400px;
+}
+
+.dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #cba6f7;
+  margin-bottom: 16px;
+}
+
+.dialog-field {
+  margin-bottom: 12px;
+}
+
+.dialog-label {
+  display: block;
+  font-size: 12px;
+  color: #a6adc8;
+  margin-bottom: 4px;
+}
+
+.dialog-select,
+.dialog-input {
+  padding: 4px 8px;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  background: #181825;
+  color: #cdd6f4;
+  font-size: 12px;
+}
+
+.dialog-select:focus,
+.dialog-input:focus {
+  outline: none;
+  border-color: #cba6f7;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dialog-btn {
+  padding: 6px 16px;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  background: #313244;
+  color: #cdd6f4;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dialog-btn:hover {
+  background: #45475a;
+}
+
+.dialog-btn.primary {
+  background: #cba6f7;
+  border-color: #cba6f7;
+  color: #1e1e2e;
+}
+
+.dialog-btn.primary:hover {
+  background: #b4befe;
+}
+
+.dialog-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .no-selection {

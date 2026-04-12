@@ -37,6 +37,7 @@ import type {
   Direction,
   DirectionType,
   Credit,
+  Harmony,
   ValidationResult,
   ValidationError,
 } from '../types';
@@ -527,6 +528,24 @@ function serializeDirectionType(dt: DirectionType): string {
   }
 }
 
+function serializeHarmony(h: Harmony): string {
+  let xml = openTag('harmony', 3);
+  xml += openTag('root', 4);
+  xml += tag('root-step', h.root.step, 5);
+  if (h.root.alter != null) xml += tag('root-alter', String(h.root.alter), 5);
+  xml += closeTag('root', 4);
+  xml += tag('kind', h.kind, 4);
+  if (h.bass) {
+    xml += openTag('bass', 4);
+    xml += tag('bass-step', h.bass.step, 5);
+    if (h.bass.alter != null) xml += tag('bass-alter', String(h.bass.alter), 5);
+    xml += closeTag('bass', 4);
+  }
+  if (h.offset != null) xml += tag('offset', String(h.offset), 4);
+  xml += closeTag('harmony', 3);
+  return xml;
+}
+
 function serializeMeasure(measure: Measure): string {
   let xml = openTag('measure', 2, { number: String(measure.number) });
 
@@ -538,6 +557,13 @@ function serializeMeasure(measure: Measure): string {
   // Directions
   for (const dir of measure.directions) {
     xml += serializeDirection(dir);
+  }
+
+  // Harmonies
+  if (measure.harmonies) {
+    for (const h of measure.harmonies) {
+      xml += serializeHarmony(h);
+    }
   }
 
   // Elements (notes, rests, forward, backup)

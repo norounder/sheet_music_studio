@@ -12,6 +12,7 @@ import type { SelectedElement } from './PropertyPanel';
 import { findElementLocation } from '@shared/controller/commands/scoreDataUtils';
 import ScoreCanvas from './ScoreCanvas';
 import type { RenderConfig } from '../engine';
+import type { PlaybackPosition } from '../playback/midiUtils';
 
 export interface ScoreEditorProps {
   /** 렌더링할 악보 데이터 */
@@ -26,6 +27,8 @@ export interface ScoreEditorProps {
   selected: SelectedElement | null;
   /** 렌더링 설정 */
   renderConfig?: Partial<RenderConfig>;
+  /** 현재 재생 위치 */
+  playbackPosition?: PlaybackPosition | null;
 }
 
 const ZOOM_MIN = 0.25;
@@ -50,6 +53,7 @@ const ScoreEditor: React.FC<ScoreEditorProps> = ({
   onSelectionChange,
   selected,
   renderConfig,
+  playbackPosition,
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
@@ -270,6 +274,34 @@ const ScoreEditor: React.FC<ScoreEditorProps> = ({
       }
     }
   }, [selected]);
+
+  // 재생 위치 하이라이트 (동시에 울리는 모든 음표)
+  useEffect(() => {
+    const container = editorRef.current;
+    if (!container) return;
+
+    container.querySelectorAll('.note-playing').forEach((el) => {
+      el.classList.remove('note-playing');
+    });
+
+    if (playbackPosition?.activeNotes) {
+      for (const part of scoreData.parts) {
+        for (const an of playbackPosition.activeNotes) {
+          const measure = part.measures[an.measureIndex];
+          if (!measure) continue;
+          const el = measure.elements[an.elementIndex];
+          if (el && 'id' in el) {
+            const svgEl = container.querySelector(
+              `[data-element-id="${el.id}"]`,
+            );
+            if (svgEl) {
+              svgEl.classList.add('note-playing');
+            }
+          }
+        }
+      }
+    }
+  }, [playbackPosition, scoreData]);
 
   // 선택 영역 사각형 좌표 계산
   const selectionRect = drag?.isDragging

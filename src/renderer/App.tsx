@@ -25,6 +25,9 @@ import type { IPCResponse } from '@shared/ipc/payloads';
 import Toolbar from './components/Toolbar';
 import ScoreEditor from './components/ScoreEditor';
 import PropertyPanel, { type SelectedElement } from './components/PropertyPanel';
+import TransposeDialog from './components/TransposeDialog';
+import { createTransposeCommand } from '@shared/controller/commands';
+import { PlaybackEngine, type PlaybackState, type PlaybackPosition } from './playback';
 import './styles/editor.css';
 
 /** file:open IPC 응답 데이터 */
@@ -99,6 +102,11 @@ const App: React.FC = () => {
   const [canUndoState, setCanUndo] = useState(false);
   const [canRedoState, setCanRedo] = useState(false);
   const [showMeasureNumbers, setShowMeasureNumbers] = useState(true);
+  const [showTransposeDialog, setShowTransposeDialog] = useState(false);
+  const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
+  const [tempo, setTempo] = useState(120);
+  const [playbackPosition, setPlaybackPosition] = useState<PlaybackPosition | null>(null);
+  const playbackRef = useRef<PlaybackEngine>(new PlaybackEngine());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
@@ -222,14 +230,101 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     try {
       const xmlContent = controllerRef.current.saveFile();
-      console.log('Saved MusicXML content length:', xmlContent.length);
+      const response = await (window.electronAPI.invoke(
+        FILE_CHANNELS.SAVE,
+        { xmlContent },
+      ) as Promise<IPCResponse<{ savedPath: string } | null>>);
+
+      if (!response.success) {
+        alert(response.error?.message ?? '파일을 저장할 수 없습니다.');
+      }
     } catch (err) {
       console.error('File save error:', err);
       alert('저장할 문서가 없습니다.');
     }
+  }, []);
+
+  const handleExportPdf = useCallback(async () => {
+    try {
+      const sd = controllerRef.current.getScoreData();
+      if (!sd) { alert('내보낼 문서가 없습니다.'); return; }
+
+      const { ExportRenderer } = await import('./engine/ExportRenderer');
+      const exporter = new ExportRenderer();
+      const uint8 = await exporter.toPdf(sd);
+
+      const response = await (window.electronAPI.invoke(
+        FILE_CHANNELS.EXPORT,
+        { format: 'pdf', binaryData: Array.from(uint8) },
+      ) as Promise<IPCResponse<{ exportedPath: string } | null>>);
+
+      if (!response.success) {
+        alert(response.error?.message ?? 'PDF 내보내기에 실패했습니다.');
+      }
+    } catch (err) {
+      console.error('PDF export error:', err);
+      alert('PDF 내보내기 중 오류가 발생했습니다.');
+    }
+  }, []);
+
+  const handleExportPng = useCallback(async () => {
+    try {
+      const sd = controllerRef.current.getScoreData();
+      if (!sd) { alert('내보낼 문서가 없습니다.'); return; }
+
+      const { ExportRenderer } = await import('./engine/ExportRenderer');
+      const exporter = new ExportRenderer();
+      const uint8 = await exporter.toPng(sd);
+
+      const response = await (window.electronAPI.invoke(
+        FILE_CHANNELS.EXPORT,
+        { format: 'png', binaryData: Array.from(uint8) },
+      ) as Promise<IPCResponse<{ exportedPath: string } | null>>);
+
+      if (!response.success) {
+        alert(response.error?.message ?? 'PNG 내보내기에 실패했습니다.');
+      }
+    } catch (err) {
+      console.error('PNG export error:', err);
+      alert('PNG 내보내기 중 오류가 발생했습니다.');
+    }
+  }, []);
+
+  const handleTranspose = useCallback(
+    (semitones: number, startMeasure?: number, endMeasure?: number) => {
+      try {
+        const cmd = createTransposeCommand(semitones, startMeasure, endMeasure);
+        controllerRef.current.executeCommand(cmd);
+      } catch (err) {
+        console.error('Transpose error:', err);
+        alert('조 변환 중 오류가 발생했습니다.');
+      }
+    },
+    [],
+  );
+
+  // Playback engine lifecycle
+  useEffect(() => {
+    const pb = playbackRef.current;
+    const unsub1 = pb.onStateChange(setPlaybackState);
+    const unsub2 = pb.onPositionChange(setPlaybackPosition);
+    return () => { unsub1(); unsub2(); pb.dispose(); };
+  }, []);
+
+  // Reload score into playback engine when scoreData changes
+  useEffect(() => {
+    playbackRef.current.loadScore(scoreData, tempo);
+  }, [scoreData, tempo]);
+
+  const handlePlay = useCallback(() => playbackRef.current.play(), []);
+  const handlePause = useCallback(() => playbackRef.current.pause(), []);
+  const handleStop = useCallback(() => playbackRef.current.stop(), []);
+  const handleTempoChange = useCallback((bpm: number) => {
+    setTempo(bpm);
+    playbackRef.current.setTempo(bpm);
   }, []);
 
   const handlePropertyChange = useCallback(
@@ -361,10 +456,19 @@ const App: React.FC = () => {
         onStaveWidthChange={setStaveWidth}
         onOpen={handleOpen}
         onSave={handleSave}
+        onExportPdf={handleExportPdf}
+        onExportPng={handleExportPng}
         canUndo={canUndoState}
         canRedo={canRedoState}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        onTranspose={() => setShowTransposeDialog(true)}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onStop={handleStop}
+        playbackState={playbackState}
+        tempo={tempo}
+        onTempoChange={handleTempoChange}
         showMeasureNumbers={showMeasureNumbers}
         onShowMeasureNumbersChange={setShowMeasureNumbers}
       />
@@ -376,12 +480,20 @@ const App: React.FC = () => {
           onSelectionChange={setSelected}
           selected={selected}
           renderConfig={renderConfig}
+          playbackPosition={playbackPosition}
         />
         <PropertyPanel
           selected={selected}
           onPropertyChange={handlePropertyChange}
         />
       </div>
+      {showTransposeDialog && (
+        <TransposeDialog
+          totalMeasures={scoreData.parts[0]?.measures.length ?? 0}
+          onTranspose={handleTranspose}
+          onClose={() => setShowTransposeDialog(false)}
+        />
+      )}
     </div>
   );
 };

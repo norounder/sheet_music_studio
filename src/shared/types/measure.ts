@@ -4,7 +4,7 @@
  */
 
 import type { MeasureAttributes } from './attributes';
-import type { MeasureElement } from './elements';
+import type { MeasureElement, PitchStep } from './elements';
 import type { DynamicMark, PedalInfo, WedgeInfo } from './expressions';
 import type { Credit, MidiInstrument } from './document';
 
@@ -86,6 +86,18 @@ export interface Lyric {
   text: string;
 }
 
+/** 화성 기호 (코드 네임) */
+export interface Harmony {
+  /** 근음 */
+  root: { step: PitchStep; alter?: number };
+  /** 코드 종류 (major, minor, dominant, diminished, augmented 등) */
+  kind: string;
+  /** 베이스 음 (전위, 예: C/G) */
+  bass?: { step: PitchStep; alter?: number };
+  /** 마디 내 오프셋 (divisions 단위) */
+  offset?: number;
+}
+
 /** 마디 */
 export interface Measure {
   /** 마디 번호 (1-based) */
@@ -96,6 +108,8 @@ export interface Measure {
   elements: MeasureElement[];
   /** 방향 지시 목록 */
   directions: Direction[];
+  /** 화성 기호 목록 */
+  harmonies?: Harmony[];
   /** 마디선 */
   barline?: Barline;
   /** 반복 정보 */

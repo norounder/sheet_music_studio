@@ -33,6 +33,18 @@ export interface ToolbarProps {
   canUndo?: boolean;
   /** Redo 가능 여부 */
   canRedo?: boolean;
+  /** 재생 콜백 */
+  onPlay?: () => void;
+  /** 일시정지 콜백 */
+  onPause?: () => void;
+  /** 정지 콜백 */
+  onStop?: () => void;
+  /** 현재 재생 상태 */
+  playbackState?: 'stopped' | 'playing' | 'paused';
+  /** 현재 템포 */
+  tempo?: number;
+  /** 템포 변경 콜백 */
+  onTempoChange?: (bpm: number) => void;
   /** 마디 번호 표시 여부 */
   showMeasureNumbers?: boolean;
   /** 마디 번호 표시 변경 콜백 */
@@ -57,6 +69,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onTranspose,
   canUndo = false,
   canRedo = false,
+  onPlay,
+  onPause,
+  onStop,
+  playbackState = 'stopped',
+  tempo = 120,
+  onTempoChange,
   showMeasureNumbers = true,
   onShowMeasureNumbersChange,
 }) => {
@@ -182,17 +200,34 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
       <div className="toolbar-separator" />
 
-      {/* Playback controls (disabled for now) */}
+      {/* Playback controls */}
       <div className="toolbar-group">
-        <button className="toolbar-btn" disabled title="Play (coming soon)">
-          <span className="icon">▶️</span>
+        <button
+          className={`toolbar-btn ${playbackState === 'playing' ? 'active' : ''}`}
+          onClick={playbackState === 'playing' ? onPause : onPlay}
+          title={playbackState === 'playing' ? 'Pause' : 'Play'}
+        >
+          <span className="icon">{playbackState === 'playing' ? '⏸️' : '▶️'}</span>
         </button>
-        <button className="toolbar-btn" disabled title="Pause (coming soon)">
-          <span className="icon">⏸️</span>
-        </button>
-        <button className="toolbar-btn" disabled title="Stop (coming soon)">
+        <button
+          className="toolbar-btn"
+          onClick={onStop}
+          disabled={playbackState === 'stopped'}
+          title="Stop"
+        >
           <span className="icon">⏹️</span>
         </button>
+        <input
+          type="number"
+          className="tempo-input"
+          min={20}
+          max={300}
+          value={tempo}
+          onChange={(e) => onTempoChange?.(parseInt(e.target.value, 10) || 120)}
+          title="Tempo (BPM)"
+          style={{ width: 48, marginLeft: 4 }}
+        />
+        <span className="zoom-display">BPM</span>
       </div>
     </div>
   );

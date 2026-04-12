@@ -1,6 +1,7 @@
 /**
- * MusicXML → Score_Data 파서 구현
+ * MusicXML → Score_Data 파서 구현 (DOMParser 기반)
  * MusicXML 3.1 score-partwise 형식을 파싱하여 Score_Data로 변환한다.
+ * DOMParser를 사용하여 원래 XML 요소 순서를 보존한다.
  *
  * MVP 지원 범위:
  * - score-partwise 형식 (score-timewise 미지원)
@@ -8,15 +9,10 @@
  * - pitch, duration, type, dot, chord, tie, tied, slur, beam, grace
  * - articulations, ornaments, dynamics, lyric, fingering
  * - barline, repeat, ending, direction (tempo, dynamic, wedge, pedal, rehearsal, segno, coda, words)
- *
- * 후속 지원 항목:
- * - score-timewise 형식
- * - figured-bass, harmony, print, sound (일부)
- * - 복잡한 tuplet 중첩
- * - 다중 credit 페이지 레이아웃
+ * - harmony (chord symbols)
  */
 
-import { XMLParser } from 'fast-xml-parser';
+import { DOMParser } from '@xmldom/xmldom';
 import type {
   ScoreData,
   Part,
@@ -34,7 +30,6 @@ import type {
   PitchStep,
   Duration,
   NoteType,
-  TupletInfo,
   BeamInfo,
   TieInfo,
   SlurInfo,
@@ -44,6 +39,7 @@ import type {
   DynamicMark,
   Fingering,
   Lyric,
+  Harmony,
   Barline,
   EndingInfo,
   Direction,
@@ -53,16 +49,8 @@ import type {
   Credit,
 } from '../types';
 import type { IScoreSerializer } from './IScoreSerializer';
-import type { ValidationResult } from '../types';
 
-// ─── Helper: ensure value is always an array ───
-
-function ensureArray<T>(value: T | T[] | undefined | null): T[] {
-  if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-// ─── Helper: unique ID generator ───
+// ─── ID generator ───
 
 let idCounter = 0;
 
@@ -74,210 +62,162 @@ function nextId(prefix: string): string {
   return `${prefix}-${++idCounter}`;
 }
 
-// ─── XML Parser configuration ───
+// ─── DOM helpers ───
 
-const ALWAYS_ARRAY_TAGS = new Set([
-  'part',
-  'score-part',
-  'measure',
-  'note',
-  'direction',
-  'barline',
-  'clef',
-  'beam',
-  'slur',
-  'tied',
-  'tie',
-  'lyric',
-  'credit',
-  'credit-words',
-  'dot',
-  'forward',
-  'backup',
-  'ending',
-  'articulations',
-  'ornaments',
-  'dynamics',
-]);
-
-function createXMLParser(): XMLParser {
-  return new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    isArray: (name: string) => ALWAYS_ARRAY_TAGS.has(name),
-    parseTagValue: false,
-    trimValues: true,
-  });
+/** Get text content of a direct child element */
+function getChildText(el: Element, tag: string): string | null {
+  const child = el.getElementsByTagName(tag)[0];
+  return child?.textContent?.trim() ?? null;
 }
 
-// ─── Note type mapping ───
+/** Get numeric value of a direct child element */
+function getChildNumber(el: Element, tag: string, fallback: number = 0): number {
+  const text = getChildText(el, tag);
+  return text != null ? Number(text) : fallback;
+}
+
+/** Get attribute value */
+function getAttr(el: Element, name: string): string | null {
+  return el.getAttribute(name);
+}
+
+/** Get direct child elements with a specific tag name */
+function directChildren(el: Element, tag: string): Element[] {
+  const result: Element[] = [];
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const child = el.childNodes[i];
+    if (child.nodeType === 1 && (child as Element).tagName === tag) {
+      result.push(child as Element);
+    }
+  }
+  return result;
+}
+
+/** Check if element has a direct child with the given tag */
+function hasChild(el: Element, tag: string): boolean {
+  return directChildren(el, tag).length > 0;
+}
+
+// ─── Static maps ───
 
 const NOTE_TYPE_MAP: Record<string, NoteType> = {
-  whole: 'whole',
-  half: 'half',
-  quarter: 'quarter',
-  eighth: 'eighth',
-  '16th': '16th',
-  '32nd': '32nd',
-  '64th': '64th',
-  '128th': '128th',
+  whole: 'whole', half: 'half', quarter: 'quarter', eighth: 'eighth',
+  '16th': '16th', '32nd': '32nd', '64th': '64th', '128th': '128th',
 };
-
-// ─── Articulation mapping ───
 
 const ARTICULATION_MAP: Record<string, Articulation> = {
-  staccato: 'staccato',
-  staccatissimo: 'staccatissimo',
-  tenuto: 'tenuto',
-  accent: 'accent',
-  'strong-accent': 'strong-accent',
-  marcato: 'marcato',
-  fermata: 'fermata',
-  'detached-legato': 'detached-legato',
-  spiccato: 'spiccato',
-  'breath-mark': 'breath-mark',
+  staccato: 'staccato', staccatissimo: 'staccatissimo', tenuto: 'tenuto',
+  accent: 'accent', 'strong-accent': 'strong-accent', marcato: 'marcato',
+  fermata: 'fermata', 'detached-legato': 'detached-legato',
+  spiccato: 'spiccato', 'breath-mark': 'breath-mark',
 };
-
-// ─── Ornament mapping ───
 
 const ORNAMENT_MAP: Record<string, Ornament> = {
-  'trill-mark': 'trill',
-  turn: 'turn',
-  'inverted-turn': 'inverted-turn',
-  mordent: 'mordent',
-  'inverted-mordent': 'inverted-mordent',
-  tremolo: 'tremolo',
-  shake: 'shake',
+  'trill-mark': 'trill', turn: 'turn', 'inverted-turn': 'inverted-turn',
+  mordent: 'mordent', 'inverted-mordent': 'inverted-mordent',
+  tremolo: 'tremolo', shake: 'shake',
 };
 
-// ─── Dynamic mapping ───
-
 const DYNAMIC_VALUES = new Set<string>([
-  'pppp', 'ppp', 'pp', 'p', 'mp',
-  'mf', 'f', 'ff', 'fff', 'ffff',
+  'pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff',
   'sfz', 'sfp', 'fp', 'rf', 'rfz',
 ]);
 
-// ─── Barline style mapping ───
-
 const BARLINE_STYLE_MAP: Record<string, Barline['style']> = {
-  regular: 'regular',
-  dotted: 'dotted',
-  dashed: 'dashed',
-  heavy: 'heavy',
-  'light-light': 'light-light',
-  'light-heavy': 'light-heavy',
-  'heavy-light': 'heavy-light',
-  'heavy-heavy': 'heavy-heavy',
-  none: 'none',
+  regular: 'regular', dotted: 'dotted', dashed: 'dashed', heavy: 'heavy',
+  'light-light': 'light-light', 'light-heavy': 'light-heavy',
+  'heavy-light': 'heavy-light', 'heavy-heavy': 'heavy-heavy', none: 'none',
 };
 
 // ─── Parsing functions ───
 
-function parseAttributes(attrXml: unknown): MeasureAttributes {
-  const attr = attrXml as Record<string, unknown>;
+function parseAttributes(el: Element): MeasureAttributes {
   const result: MeasureAttributes = {};
 
-  if (attr.divisions != null) {
-    result.divisions = Number(attr.divisions);
-  }
+  const divText = getChildText(el, 'divisions');
+  if (divText != null) result.divisions = Number(divText);
 
-  if (attr.staves != null) {
-    result.staves = Number(attr.staves);
-  }
+  const stavesText = getChildText(el, 'staves');
+  if (stavesText != null) result.staves = Number(stavesText);
 
-  if (attr.key != null) {
-    result.keySignature = parseKeySignature(attr.key);
-  }
+  const keyEl = directChildren(el, 'key')[0];
+  if (keyEl) result.keySignature = parseKeySignature(keyEl);
 
-  if (attr.time != null) {
-    result.timeSignature = parseTimeSignature(attr.time);
-  }
+  const timeEl = directChildren(el, 'time')[0];
+  if (timeEl) result.timeSignature = parseTimeSignature(timeEl);
 
-  if (attr.clef != null) {
-    result.clef = ensureArray(attr.clef).map((c, i) => parseClef(c, i));
+  const clefEls = directChildren(el, 'clef');
+  if (clefEls.length > 0) {
+    result.clef = clefEls.map((c, i) => parseClef(c, i));
   }
 
   return result;
 }
 
-function parseKeySignature(keyXml: unknown): KeySignature {
-  const key = keyXml as Record<string, unknown>;
+function parseKeySignature(el: Element): KeySignature {
   return {
-    fifths: Number(key.fifths ?? 0),
-    mode: (key.mode as string) === 'minor' ? 'minor' : 'major',
+    fifths: getChildNumber(el, 'fifths', 0),
+    mode: getChildText(el, 'mode') === 'minor' ? 'minor' : 'major',
   };
 }
 
-function parseTimeSignature(timeXml: unknown): TimeSignature {
-  const time = timeXml as Record<string, unknown>;
+function parseTimeSignature(el: Element): TimeSignature {
   const result: TimeSignature = {
-    beats: Number(time.beats ?? 4),
-    beatType: Number(time['beat-type'] ?? 4),
+    beats: getChildNumber(el, 'beats', 4),
+    beatType: getChildNumber(el, 'beat-type', 4),
   };
-
-  const symbol = (time as Record<string, unknown>)['@_symbol'] as string | undefined;
+  const symbol = getAttr(el, 'symbol');
   if (symbol === 'common') result.symbol = 'common';
   else if (symbol === 'cut') result.symbol = 'cut';
-
   return result;
 }
 
-function parseClef(clefXml: unknown, index: number): Clef {
-  const clef = clefXml as Record<string, unknown>;
-  const staffNum = clef['@_number'] != null ? Number(clef['@_number']) : index + 1;
+function parseClef(el: Element, index: number): Clef {
+  const numAttr = getAttr(el, 'number');
+  const staffNum = numAttr != null ? Number(numAttr) : index + 1;
   const result: Clef = {
-    sign: (clef.sign as string as Clef['sign']) ?? 'G',
-    line: Number(clef.line ?? 2),
+    sign: (getChildText(el, 'sign') as Clef['sign']) ?? 'G',
+    line: getChildNumber(el, 'line', 2),
     staffNumber: staffNum,
   };
-
-  if (clef['clef-octave-change'] != null) {
-    result.octaveChange = Number(clef['clef-octave-change']);
-  }
-
+  const octChange = getChildText(el, 'clef-octave-change');
+  if (octChange != null) result.octaveChange = Number(octChange);
   return result;
 }
 
-function parsePitch(pitchXml: unknown): Pitch {
-  const p = pitchXml as Record<string, unknown>;
+function parsePitch(el: Element): Pitch {
   const result: Pitch = {
-    step: (p.step as string as PitchStep) ?? 'C',
-    octave: Number(p.octave ?? 4),
+    step: (getChildText(el, 'step') as PitchStep) ?? 'C',
+    octave: getChildNumber(el, 'octave', 4),
   };
-
-  if (p.alter != null) {
-    result.alter = Number(p.alter);
-  }
-
+  const alterText = getChildText(el, 'alter');
+  if (alterText != null) result.alter = Number(alterText);
   return result;
 }
 
-function parseDuration(noteXml: Record<string, unknown>, currentDivisions: number): Duration {
-  const divisions = noteXml.duration != null ? Number(noteXml.duration) : currentDivisions;
-  const noteType = NOTE_TYPE_MAP[noteXml.type as string] ?? 'quarter';
-  const dots = ensureArray(noteXml.dot).length;
+function parseDuration(noteEl: Element, currentDivisions: number): Duration {
+  const durText = getChildText(noteEl, 'duration');
+  const divisions = durText != null ? Number(durText) : currentDivisions;
+  const typeText = getChildText(noteEl, 'type');
+  const noteType = NOTE_TYPE_MAP[typeText ?? ''] ?? 'quarter';
+  const dots = directChildren(noteEl, 'dot').length;
 
-  const result: Duration = {
-    divisions,
-    noteType,
-    dots,
-  };
+  const result: Duration = { divisions, noteType, dots };
 
-  // Parse tuplet from time-modification
-  if (noteXml['time-modification'] != null) {
-    const tm = noteXml['time-modification'] as Record<string, unknown>;
-    // Tuplet type comes from notations/tuplet
+  // Tuplet from time-modification
+  const timeMod = directChildren(noteEl, 'time-modification')[0];
+  if (timeMod) {
     let tupletType: 'start' | 'stop' = 'start';
-    const notations = noteXml.notations as Record<string, unknown> | undefined;
-    if (notations?.tuplet != null) {
-      const tupletXml = notations.tuplet as Record<string, unknown>;
-      tupletType = (tupletXml['@_type'] as string) === 'stop' ? 'stop' : 'start';
+    const notationsEl = directChildren(noteEl, 'notations')[0];
+    if (notationsEl) {
+      const tupletEl = directChildren(notationsEl, 'tuplet')[0];
+      if (tupletEl && getAttr(tupletEl, 'type') === 'stop') {
+        tupletType = 'stop';
+      }
     }
-
     result.tuplet = {
-      actualNotes: Number(tm['actual-notes'] ?? 3),
-      normalNotes: Number(tm['normal-notes'] ?? 2),
+      actualNotes: getChildNumber(timeMod, 'actual-notes', 3),
+      normalNotes: getChildNumber(timeMod, 'normal-notes', 2),
       type: tupletType,
     };
   }
@@ -285,325 +225,324 @@ function parseDuration(noteXml: Record<string, unknown>, currentDivisions: numbe
   return result;
 }
 
-function parseBeams(noteXml: Record<string, unknown>): BeamInfo[] | undefined {
-  const beams = ensureArray(noteXml.beam);
-  if (beams.length === 0) return undefined;
+function parseBeams(noteEl: Element): BeamInfo[] | undefined {
+  const beamEls = directChildren(noteEl, 'beam');
+  if (beamEls.length === 0) return undefined;
 
-  return beams.map((b) => {
-    if (typeof b === 'object' && b !== null) {
-      const beam = b as Record<string, unknown>;
-      return {
-        number: Number(beam['@_number'] ?? 1),
-        type: parseBeamType(beam['#text'] as string ?? String(beam)),
-      };
-    }
+  return beamEls.map((b) => {
+    const text = b.textContent?.trim() ?? 'continue';
+    let type: BeamInfo['type'] = 'continue';
+    if (text === 'begin') type = 'begin';
+    else if (text === 'end') type = 'end';
     return {
-      number: 1,
-      type: parseBeamType(String(b)),
+      number: Number(getAttr(b, 'number') ?? 1),
+      type,
     };
   });
 }
 
-function parseBeamType(value: string): BeamInfo['type'] {
-  if (value === 'begin') return 'begin';
-  if (value === 'end') return 'end';
-  return 'continue';
-}
-
-function parseTie(noteXml: Record<string, unknown>): TieInfo | undefined {
-  const ties = ensureArray(noteXml.tie);
-  if (ties.length === 0) return undefined;
-
-  // If there are two ties (stop + start), it's a continue
-  if (ties.length >= 2) {
-    return { type: 'continue' };
-  }
-
-  const tie = ties[0] as Record<string, unknown>;
-  const tieType = (tie['@_type'] as string) ?? 'start';
+function parseTie(noteEl: Element): TieInfo | undefined {
+  const tieEls = directChildren(noteEl, 'tie');
+  if (tieEls.length === 0) return undefined;
+  if (tieEls.length >= 2) return { type: 'continue' };
+  const tieType = getAttr(tieEls[0], 'type') ?? 'start';
   return { type: tieType as TieInfo['type'] };
 }
 
-function parseSlurs(noteXml: Record<string, unknown>): SlurInfo[] | undefined {
-  const notations = noteXml.notations as Record<string, unknown> | undefined;
-  if (!notations) return undefined;
+function parseSlurs(noteEl: Element): SlurInfo[] | undefined {
+  const notationsEl = directChildren(noteEl, 'notations')[0];
+  if (!notationsEl) return undefined;
+  const slurEls = directChildren(notationsEl, 'slur');
+  if (slurEls.length === 0) return undefined;
 
-  const slurs = ensureArray(notations.slur);
-  if (slurs.length === 0) return undefined;
-
-  return slurs.map((s) => {
-    const slur = s as Record<string, unknown>;
+  return slurEls.map((s) => {
     const result: SlurInfo = {
-      number: Number(slur['@_number'] ?? 1),
-      type: (slur['@_type'] as string as SlurInfo['type']) ?? 'start',
+      number: Number(getAttr(s, 'number') ?? 1),
+      type: (getAttr(s, 'type') as SlurInfo['type']) ?? 'start',
     };
-    if (slur['@_placement']) {
-      result.placement = slur['@_placement'] as 'above' | 'below';
-    }
+    const placement = getAttr(s, 'placement');
+    if (placement) result.placement = placement as 'above' | 'below';
     return result;
   });
 }
 
-function parseGraceNote(noteXml: Record<string, unknown>): GraceNoteInfo | undefined {
-  if (noteXml.grace == null) return undefined;
-
-  const grace = noteXml.grace as Record<string, unknown>;
+function parseGraceNote(noteEl: Element): GraceNoteInfo | undefined {
+  const graceEl = directChildren(noteEl, 'grace')[0];
+  if (!graceEl) return undefined;
   return {
-    slash: grace['@_slash'] === 'yes',
-    stealTimePrevious: grace['@_steal-time-previous'] != null
-      ? Number(grace['@_steal-time-previous']) : undefined,
-    stealTimeFollowing: grace['@_steal-time-following'] != null
-      ? Number(grace['@_steal-time-following']) : undefined,
+    slash: getAttr(graceEl, 'slash') === 'yes',
+    stealTimePrevious: getAttr(graceEl, 'steal-time-previous') != null
+      ? Number(getAttr(graceEl, 'steal-time-previous')) : undefined,
+    stealTimeFollowing: getAttr(graceEl, 'steal-time-following') != null
+      ? Number(getAttr(graceEl, 'steal-time-following')) : undefined,
   };
 }
 
-function parseArticulations(noteXml: Record<string, unknown>): Articulation[] | undefined {
-  const notations = noteXml.notations as Record<string, unknown> | undefined;
-  if (!notations) return undefined;
-
-  const articulationsArr = ensureArray(notations.articulations);
-  if (articulationsArr.length === 0) return undefined;
+function parseArticulations(noteEl: Element): Articulation[] | undefined {
+  const notationsEl = directChildren(noteEl, 'notations')[0];
+  if (!notationsEl) return undefined;
+  const artEls = directChildren(notationsEl, 'articulations');
+  if (artEls.length === 0) return undefined;
 
   const result: Articulation[] = [];
-  for (const artGroup of articulationsArr) {
-    const group = artGroup as Record<string, unknown>;
-    for (const [key, _value] of Object.entries(group)) {
-      if (key.startsWith('@_')) continue;
-      const mapped = ARTICULATION_MAP[key];
-      if (mapped) result.push(mapped);
+  for (const artGroup of artEls) {
+    for (let i = 0; i < artGroup.childNodes.length; i++) {
+      const child = artGroup.childNodes[i];
+      if (child.nodeType === 1) {
+        const mapped = ARTICULATION_MAP[(child as Element).tagName];
+        if (mapped) result.push(mapped);
+      }
     }
   }
-
   return result.length > 0 ? result : undefined;
 }
 
-function parseOrnaments(noteXml: Record<string, unknown>): Ornament[] | undefined {
-  const notations = noteXml.notations as Record<string, unknown> | undefined;
-  if (!notations) return undefined;
-
-  const ornamentsArr = ensureArray(notations.ornaments);
-  if (ornamentsArr.length === 0) return undefined;
+function parseOrnaments(noteEl: Element): Ornament[] | undefined {
+  const notationsEl = directChildren(noteEl, 'notations')[0];
+  if (!notationsEl) return undefined;
+  const ornEls = directChildren(notationsEl, 'ornaments');
+  if (ornEls.length === 0) return undefined;
 
   const result: Ornament[] = [];
-  for (const ornGroup of ornamentsArr) {
-    const group = ornGroup as Record<string, unknown>;
-    for (const [key, _value] of Object.entries(group)) {
-      if (key.startsWith('@_')) continue;
-      const mapped = ORNAMENT_MAP[key];
-      if (mapped) result.push(mapped);
+  for (const ornGroup of ornEls) {
+    for (let i = 0; i < ornGroup.childNodes.length; i++) {
+      const child = ornGroup.childNodes[i];
+      if (child.nodeType === 1) {
+        const mapped = ORNAMENT_MAP[(child as Element).tagName];
+        if (mapped) result.push(mapped);
+      }
     }
   }
-
   return result.length > 0 ? result : undefined;
 }
 
-function parseDynamicsFromNotations(noteXml: Record<string, unknown>): DynamicMark | undefined {
-  const notations = noteXml.notations as Record<string, unknown> | undefined;
-  if (!notations) return undefined;
+function parseDynamicsFromNotations(noteEl: Element): DynamicMark | undefined {
+  const notationsEl = directChildren(noteEl, 'notations')[0];
+  if (!notationsEl) return undefined;
+  const dynEls = directChildren(notationsEl, 'dynamics');
+  if (dynEls.length === 0) return undefined;
 
-  const dynamicsArr = ensureArray(notations.dynamics);
-  if (dynamicsArr.length === 0) return undefined;
-
-  for (const dynGroup of dynamicsArr) {
-    const group = dynGroup as Record<string, unknown>;
-    for (const key of Object.keys(group)) {
-      if (key.startsWith('@_')) continue;
-      if (DYNAMIC_VALUES.has(key)) return key as DynamicMark;
+  for (const dynGroup of dynEls) {
+    for (let i = 0; i < dynGroup.childNodes.length; i++) {
+      const child = dynGroup.childNodes[i];
+      if (child.nodeType === 1 && DYNAMIC_VALUES.has((child as Element).tagName)) {
+        return (child as Element).tagName as DynamicMark;
+      }
     }
   }
-
   return undefined;
 }
 
-function parseLyrics(noteXml: Record<string, unknown>): Lyric[] | undefined {
-  const lyrics = ensureArray(noteXml.lyric);
-  if (lyrics.length === 0) return undefined;
+function parseLyrics(noteEl: Element): Lyric[] | undefined {
+  const lyricEls = directChildren(noteEl, 'lyric');
+  if (lyricEls.length === 0) return undefined;
 
-  return lyrics.map((l) => {
-    const lyric = l as Record<string, unknown>;
-    return {
-      number: Number(lyric['@_number'] ?? 1),
-      syllabic: (lyric.syllabic as string as Lyric['syllabic']) ?? 'single',
-      text: String(lyric.text ?? ''),
-    };
-  });
+  return lyricEls.map((l) => ({
+    number: Number(getAttr(l, 'number') ?? 1),
+    syllabic: (getChildText(l, 'syllabic') as Lyric['syllabic']) ?? 'single',
+    text: getChildText(l, 'text') ?? '',
+  }));
 }
 
-function parseFingering(noteXml: Record<string, unknown>): Fingering | undefined {
-  const notations = noteXml.notations as Record<string, unknown> | undefined;
-  if (!notations) return undefined;
+function parseFingering(noteEl: Element): Fingering | undefined {
+  const notationsEl = directChildren(noteEl, 'notations')[0];
+  if (!notationsEl) return undefined;
+  const technicalEl = directChildren(notationsEl, 'technical')[0];
+  if (!technicalEl) return undefined;
+  const fingeringEl = directChildren(technicalEl, 'fingering')[0];
+  if (!fingeringEl) return undefined;
 
-  const technical = notations.technical as Record<string, unknown> | undefined;
-  if (!technical?.fingering) return undefined;
-
-  const f = technical.fingering as Record<string, unknown>;
-  const finger = typeof f === 'object'
-    ? Number(f['#text'] ?? f)
-    : Number(f);
+  const finger = Number(fingeringEl.textContent?.trim() ?? NaN);
+  if (isNaN(finger)) return undefined;
 
   const result: Fingering = { finger };
-
-  if (typeof f === 'object' && f['@_placement']) {
-    result.placement = f['@_placement'] as 'above' | 'below';
-  }
-
-  return isNaN(result.finger) ? undefined : result;
+  const placement = getAttr(fingeringEl, 'placement');
+  if (placement) result.placement = placement as 'above' | 'below';
+  return result;
 }
 
-function parseNoteElement(
-  noteXml: Record<string, unknown>,
-  currentDivisions: number,
-): NoteElement | RestElement {
-  const isRest = noteXml.rest != null;
-  const voice = Number(noteXml.voice ?? 1);
-  const staff = Number(noteXml.staff ?? 1);
-
-  // Grace notes have no duration element
-  const isGrace = noteXml.grace != null;
+function parseNoteElement(noteEl: Element, currentDivisions: number): NoteElement | RestElement {
+  const isRest = hasChild(noteEl, 'rest');
+  const voice = getChildNumber(noteEl, 'voice', 1);
+  const staff = getChildNumber(noteEl, 'staff', 1);
+  const isGrace = hasChild(noteEl, 'grace');
 
   const duration = isGrace
-    ? { divisions: 0, noteType: NOTE_TYPE_MAP[noteXml.type as string] ?? 'eighth' as NoteType, dots: ensureArray(noteXml.dot).length }
-    : parseDuration(noteXml, currentDivisions);
+    ? {
+        divisions: 0,
+        noteType: NOTE_TYPE_MAP[getChildText(noteEl, 'type') ?? ''] ?? ('eighth' as NoteType),
+        dots: directChildren(noteEl, 'dot').length,
+      }
+    : parseDuration(noteEl, currentDivisions);
 
   if (isRest) {
-    const rest: RestElement = {
-      type: 'rest',
-      id: nextId('rest'),
-      duration,
-      voice,
-      staff,
-    };
-
-    const restData = noteXml.rest as Record<string, unknown> | undefined;
-    if (restData && typeof restData === 'object') {
-      if (restData['display-step']) rest.displayStep = String(restData['display-step']);
-      if (restData['display-octave']) rest.displayOctave = Number(restData['display-octave']);
+    const rest: RestElement = { type: 'rest', id: nextId('rest'), duration, voice, staff };
+    const restEl = directChildren(noteEl, 'rest')[0];
+    if (restEl) {
+      const ds = getChildText(restEl, 'display-step');
+      const doct = getChildText(restEl, 'display-octave');
+      if (ds) rest.displayStep = ds;
+      if (doct) rest.displayOctave = Number(doct);
     }
-
     return rest;
   }
 
-  // It's a note
+  // Note
+  const pitchEl = directChildren(noteEl, 'pitch')[0];
   const note: NoteElement = {
     type: 'note',
     id: nextId('note'),
-    pitch: parsePitch(noteXml.pitch),
+    pitch: pitchEl ? parsePitch(pitchEl) : { step: 'C', octave: 4 },
     duration,
     voice,
     staff,
   };
 
   // Stem
-  if (noteXml.stem != null) {
-    note.stem = noteXml.stem as NoteElement['stem'];
+  const stemText = getChildText(noteEl, 'stem');
+  if (stemText === 'up' || stemText === 'down' || stemText === 'none') {
+    note.stem = stemText;
   }
 
   // Chord
-  if (noteXml.chord != null) {
-    note.chord = true;
-  }
+  if (hasChild(noteEl, 'chord')) note.chord = true;
 
-  // Grace note
-  const graceNote = parseGraceNote(noteXml);
+  // Grace
+  const graceNote = parseGraceNote(noteEl);
   if (graceNote) note.graceNote = graceNote;
 
   // Beam
-  const beams = parseBeams(noteXml);
+  const beams = parseBeams(noteEl);
   if (beams) note.beam = beams;
 
   // Tie
-  const tie = parseTie(noteXml);
+  const tie = parseTie(noteEl);
   if (tie) note.tie = tie;
 
   // Slur
-  const slurs = parseSlurs(noteXml);
+  const slurs = parseSlurs(noteEl);
   if (slurs) note.slur = slurs;
 
   // Articulations
-  const articulations = parseArticulations(noteXml);
+  const articulations = parseArticulations(noteEl);
   if (articulations) note.articulations = articulations;
 
   // Ornaments
-  const ornaments = parseOrnaments(noteXml);
+  const ornaments = parseOrnaments(noteEl);
   if (ornaments) note.ornaments = ornaments;
 
   // Dynamics (from notations)
-  const dynamics = parseDynamicsFromNotations(noteXml);
+  const dynamics = parseDynamicsFromNotations(noteEl);
   if (dynamics) note.dynamics = dynamics;
 
   // Lyrics
-  const lyrics = parseLyrics(noteXml);
+  const lyrics = parseLyrics(noteEl);
   if (lyrics) note.lyrics = lyrics;
 
   // Fingering
-  const fingering = parseFingering(noteXml);
+  const fingering = parseFingering(noteEl);
   if (fingering) note.fingering = fingering;
 
   return note;
 }
 
-function parseForward(fwdXml: unknown): Forward {
-  const fwd = fwdXml as Record<string, unknown>;
+function parseForward(el: Element): Forward {
   return {
     type: 'forward',
     duration: {
-      divisions: Number(fwd.duration ?? 0),
+      divisions: getChildNumber(el, 'duration', 0),
       noteType: 'quarter',
       dots: 0,
     },
-    voice: Number(fwd.voice ?? 1),
-    staff: Number(fwd.staff ?? 1),
+    voice: getChildNumber(el, 'voice', 1),
+    staff: getChildNumber(el, 'staff', 1),
   };
 }
 
-function parseBackup(bkpXml: unknown): Backup {
-  const bkp = bkpXml as Record<string, unknown>;
+function parseBackup(el: Element): Backup {
   return {
     type: 'backup',
     duration: {
-      divisions: Number(bkp.duration ?? 0),
+      divisions: getChildNumber(el, 'duration', 0),
       noteType: 'quarter',
       dots: 0,
     },
   };
+}
+
+// ─── Harmony parsing ───
+
+/** MusicXML kind → display suffix mapping */
+const HARMONY_KIND_MAP: Record<string, string> = {
+  major: '', minor: 'm', dominant: '7', 'major-seventh': 'maj7',
+  'minor-seventh': 'm7', diminished: 'dim', augmented: 'aug',
+  'diminished-seventh': 'dim7', 'half-diminished': 'm7b5',
+  'major-minor': 'mMaj7', 'major-sixth': '6', 'minor-sixth': 'm6',
+  suspended: 'sus', 'suspended-second': 'sus2', 'suspended-fourth': 'sus4',
+  power: '5', none: '',
+};
+
+function parseHarmony(el: Element): Harmony | null {
+  const rootEl = directChildren(el, 'root')[0];
+  if (!rootEl) return null;
+
+  const rootStep = getChildText(rootEl, 'root-step') as PitchStep | null;
+  if (!rootStep) return null;
+
+  const rootAlterText = getChildText(rootEl, 'root-alter');
+  const root: Harmony['root'] = { step: rootStep };
+  if (rootAlterText != null) root.alter = Number(rootAlterText);
+
+  const kind = getChildText(el, 'kind') ?? 'major';
+  const result: Harmony = { root, kind };
+
+  // Bass note (for inversions like C/G)
+  const bassEl = directChildren(el, 'bass')[0];
+  if (bassEl) {
+    const bassStep = getChildText(bassEl, 'bass-step') as PitchStep | null;
+    if (bassStep) {
+      result.bass = { step: bassStep };
+      const bassAlterText = getChildText(bassEl, 'bass-alter');
+      if (bassAlterText != null) result.bass.alter = Number(bassAlterText);
+    }
+  }
+
+  // Offset
+  const offsetText = getChildText(el, 'offset');
+  if (offsetText != null) result.offset = Number(offsetText);
+
+  return result;
 }
 
 // ─── Barline parsing ───
 
-function parseBarline(barlineXml: unknown): Barline {
-  const bl = barlineXml as Record<string, unknown>;
-  const location = (bl['@_location'] as string as Barline['location']) ?? 'right';
-  const style = BARLINE_STYLE_MAP[bl['bar-style'] as string] ?? 'regular';
-
+function parseBarline(el: Element): Barline {
+  const location = (getAttr(el, 'location') as Barline['location']) ?? 'right';
+  const style = BARLINE_STYLE_MAP[getChildText(el, 'bar-style') ?? ''] ?? 'regular';
   const result: Barline = { location, style };
 
   // Repeat
-  if (bl.repeat != null) {
-    const rep = bl.repeat as Record<string, unknown>;
+  const repeatEl = directChildren(el, 'repeat')[0];
+  if (repeatEl) {
     result.repeat = {
-      direction: (rep['@_direction'] as string) === 'forward' ? 'forward' : 'backward',
+      direction: getAttr(repeatEl, 'direction') === 'forward' ? 'forward' : 'backward',
     };
-    if (rep['@_times'] != null) {
-      result.repeat.times = Number(rep['@_times']);
-    }
+    const times = getAttr(repeatEl, 'times');
+    if (times != null) result.repeat.times = Number(times);
   }
 
   // Ending
-  const endings = ensureArray(bl.ending);
-  if (endings.length > 0) {
-    const ending = endings[0] as Record<string, unknown>;
-    const numberStr = String(ending['@_number'] ?? '1');
+  const endingEls = directChildren(el, 'ending');
+  if (endingEls.length > 0) {
+    const endingEl = endingEls[0];
+    const numberStr = getAttr(endingEl, 'number') ?? '1';
     const numbers = numberStr.split(/[,\s]+/).map(Number).filter((n) => !isNaN(n));
     const endingInfo: EndingInfo = {
       number: numbers.length > 0 ? numbers : [1],
-      type: (ending['@_type'] as string as EndingInfo['type']) ?? 'start',
+      type: (getAttr(endingEl, 'type') as EndingInfo['type']) ?? 'start',
     };
-    // fast-xml-parser stores text content in #text.
-    // If the element has no child elements, the text may be the value itself.
-    const text = ending['#text'];
-    if (text != null) {
-      endingInfo.text = String(text);
-    }
+    const text = endingEl.textContent?.trim();
+    if (text) endingInfo.text = text;
     result.ending = endingInfo;
   }
 
@@ -612,69 +551,62 @@ function parseBarline(barlineXml: unknown): Barline {
 
 // ─── Direction parsing ───
 
-function parseDirections(directionXml: unknown): Direction | null {
-  const dir = directionXml as Record<string, unknown>;
-  const placement = (dir['@_placement'] as string as Direction['placement']) ?? 'above';
-  const staff = dir.staff != null ? Number(dir.staff) : undefined;
-  const offset = dir.offset != null ? Number(dir.offset) : undefined;
+function parseDirection(el: Element): Direction | null {
+  const placement = (getAttr(el, 'placement') as Direction['placement']) ?? 'above';
+  const staffText = getChildText(el, 'staff');
+  const staff = staffText != null ? Number(staffText) : undefined;
+  const offsetText = getChildText(el, 'offset');
+  const offset = offsetText != null ? Number(offsetText) : undefined;
 
-  const dirType = dir['direction-type'] as Record<string, unknown> | undefined;
-  if (!dirType) return null;
+  const dirTypeEl = directChildren(el, 'direction-type')[0];
+  if (!dirTypeEl) return null;
 
-  const parsedType = parseDirectionType(dirType, dir);
+  const parsedType = parseDirectionType(dirTypeEl, el);
   if (!parsedType) return null;
 
-  const result: Direction = {
-    type: parsedType,
-    placement,
-  };
+  const result: Direction = { type: parsedType, placement };
   if (offset != null) result.offset = offset;
   if (staff != null) result.staff = staff;
-
   return result;
 }
 
-function parseDirectionType(
-  dirType: Record<string, unknown>,
-  dirXml: Record<string, unknown>,
-): DirectionType | null {
+function parseDirectionType(dirTypeEl: Element, dirEl: Element): DirectionType | null {
   // Tempo (from sound element)
-  if (dirXml.sound != null) {
-    const sound = dirXml.sound as Record<string, unknown>;
-    if (sound['@_tempo'] != null) {
-      const result: DirectionType = {
-        kind: 'tempo',
-        bpm: Number(sound['@_tempo']),
-      };
-      // Check for words text as tempo text
-      if (dirType.words != null) {
-        const words = typeof dirType.words === 'string'
-          ? dirType.words
-          : (dirType.words as Record<string, unknown>)['#text'] as string | undefined;
-        if (words) (result as { kind: 'tempo'; bpm: number; text?: string }).text = String(words);
+  const soundEl = directChildren(dirEl, 'sound')[0];
+  if (soundEl) {
+    const tempoAttr = getAttr(soundEl, 'tempo');
+    if (tempoAttr != null) {
+      const result: DirectionType = { kind: 'tempo', bpm: Number(tempoAttr) };
+      // Check for metronome element (more detailed tempo info)
+      const metronomeEl = directChildren(dirTypeEl, 'metronome')[0];
+      if (metronomeEl) {
+        const perMinute = getChildText(metronomeEl, 'per-minute');
+        if (perMinute) (result as { bpm: number }).bpm = Number(perMinute);
+      }
+      const wordsEl = directChildren(dirTypeEl, 'words')[0];
+      if (wordsEl) {
+        const text = wordsEl.textContent?.trim();
+        if (text) (result as { kind: 'tempo'; bpm: number; text?: string }).text = text;
       }
       return result;
     }
   }
 
   // Dynamics
-  if (dirType.dynamics != null) {
-    const dynArr = ensureArray(dirType.dynamics);
-    for (const dyn of dynArr) {
-      const dynObj = dyn as Record<string, unknown>;
-      for (const key of Object.keys(dynObj)) {
-        if (key.startsWith('@_')) continue;
-        if (DYNAMIC_VALUES.has(key)) {
-          return { kind: 'dynamic', value: key as DynamicMark };
-        }
+  const dynEl = directChildren(dirTypeEl, 'dynamics')[0];
+  if (dynEl) {
+    for (let i = 0; i < dynEl.childNodes.length; i++) {
+      const child = dynEl.childNodes[i];
+      if (child.nodeType === 1 && DYNAMIC_VALUES.has((child as Element).tagName)) {
+        return { kind: 'dynamic', value: (child as Element).tagName as DynamicMark };
       }
     }
   }
 
-  // Wedge (crescendo/diminuendo)
-  if (dirType.wedge != null) {
-    const wedge = dirType.wedge as Record<string, unknown>;
-    const wedgeType = wedge['@_type'] as string;
+  // Wedge
+  const wedgeEl = directChildren(dirTypeEl, 'wedge')[0];
+  if (wedgeEl) {
+    const wedgeType = getAttr(wedgeEl, 'type') ?? 'stop';
     let value: WedgeInfo;
     if (wedgeType === 'crescendo') value = { type: 'crescendo' };
     else if (wedgeType === 'diminuendo') value = { type: 'diminuendo' };
@@ -683,102 +615,87 @@ function parseDirectionType(
   }
 
   // Pedal
-  if (dirType.pedal != null) {
-    const pedal = dirType.pedal as Record<string, unknown>;
-    const pedalType = (pedal['@_type'] as string) ?? 'start';
-    const value: PedalInfo = {
-      type: pedalType as PedalInfo['type'],
-    };
-    if (pedal['@_line'] != null) {
-      value.line = pedal['@_line'] === 'yes';
-    }
+  const pedalEl = directChildren(dirTypeEl, 'pedal')[0];
+  if (pedalEl) {
+    const pedalType = (getAttr(pedalEl, 'type') ?? 'start') as PedalInfo['type'];
+    const value: PedalInfo = { type: pedalType };
+    const line = getAttr(pedalEl, 'line');
+    if (line != null) value.line = line === 'yes';
     return { kind: 'pedal', value };
   }
 
   // Rehearsal
-  if (dirType.rehearsal != null) {
-    const reh = dirType.rehearsal;
-    const text = typeof reh === 'string' ? reh : String((reh as Record<string, unknown>)['#text'] ?? reh);
-    return { kind: 'rehearsal', text };
+  const rehEl = directChildren(dirTypeEl, 'rehearsal')[0];
+  if (rehEl) {
+    return { kind: 'rehearsal', text: rehEl.textContent?.trim() ?? '' };
   }
 
   // Segno
-  if (dirType.segno != null) {
-    return { kind: 'segno' };
-  }
+  if (directChildren(dirTypeEl, 'segno').length > 0) return { kind: 'segno' };
 
   // Coda
-  if (dirType.coda != null) {
-    return { kind: 'coda' };
-  }
+  if (directChildren(dirTypeEl, 'coda').length > 0) return { kind: 'coda' };
 
   // Words (generic text direction)
-  if (dirType.words != null) {
-    const words = typeof dirType.words === 'string'
-      ? dirType.words
-      : String((dirType.words as Record<string, unknown>)['#text'] ?? dirType.words);
-    return { kind: 'words', text: words };
+  const wordsEl = directChildren(dirTypeEl, 'words')[0];
+  if (wordsEl) {
+    return { kind: 'words', text: wordsEl.textContent?.trim() ?? '' };
   }
 
   return null;
 }
 
-// ─── Measure parsing ───
+// ─── Measure parsing (preserves original XML order) ───
 
-function parseMeasure(measureXml: Record<string, unknown>, currentDivisions: number): { measure: Measure; divisions: number } {
-  const number = Number(measureXml['@_number'] ?? 1);
-  const measure: Measure = {
-    number,
-    elements: [],
-    directions: [],
-  };
-
+function parseMeasure(
+  measureEl: Element,
+  currentDivisions: number,
+): { measure: Measure; divisions: number } {
+  const rawNumber = Number(getAttr(measureEl, 'number') ?? 1);
+  const number = isNaN(rawNumber) ? 0 : rawNumber;
+  const measure: Measure = { number, elements: [], directions: [] };
   let divisions = currentDivisions;
 
-  // Parse attributes
-  if (measureXml.attributes != null) {
-    measure.attributes = parseAttributes(measureXml.attributes);
-    if (measure.attributes.divisions != null) {
-      divisions = measure.attributes.divisions;
+  // Iterate children in original XML order — the core advantage of DOMParser
+  for (let i = 0; i < measureEl.childNodes.length; i++) {
+    const child = measureEl.childNodes[i];
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+
+    switch (el.tagName) {
+      case 'attributes': {
+        measure.attributes = parseAttributes(el);
+        if (measure.attributes.divisions != null) {
+          divisions = measure.attributes.divisions;
+        }
+        break;
+      }
+      case 'note':
+        measure.elements.push(parseNoteElement(el, divisions));
+        break;
+      case 'forward':
+        measure.elements.push(parseForward(el));
+        break;
+      case 'backup':
+        measure.elements.push(parseBackup(el));
+        break;
+      case 'direction': {
+        const dir = parseDirection(el);
+        if (dir) measure.directions.push(dir);
+        break;
+      }
+      case 'barline':
+        measure.barline = parseBarline(el);
+        break;
+      case 'harmony': {
+          const h = parseHarmony(el);
+          if (h) {
+            if (!measure.harmonies) measure.harmonies = [];
+            measure.harmonies.push(h);
+          }
+          break;
+        }
     }
-  }
-
-  // We need to iterate through child elements in order to preserve
-  // the sequence of notes, forwards, backups, and directions.
-  // fast-xml-parser groups by tag name, so we reconstruct order from arrays.
-
-  // Parse notes
-  const notes = ensureArray(measureXml.note);
-  for (const noteXml of notes) {
-    const n = noteXml as Record<string, unknown>;
-    const element = parseNoteElement(n, divisions);
-    measure.elements.push(element);
-  }
-
-  // Parse forward elements
-  const forwards = ensureArray(measureXml.forward);
-  for (const fwd of forwards) {
-    measure.elements.push(parseForward(fwd));
-  }
-
-  // Parse backup elements
-  const backups = ensureArray(measureXml.backup);
-  for (const bkp of backups) {
-    measure.elements.push(parseBackup(bkp));
-  }
-
-  // Parse directions
-  const directions = ensureArray(measureXml.direction);
-  for (const dirXml of directions) {
-    const dir = parseDirections(dirXml);
-    if (dir) measure.directions.push(dir);
-  }
-
-  // Parse barlines
-  const barlines = ensureArray(measureXml.barline);
-  if (barlines.length > 0) {
-    // Use the last barline (typically the right barline)
-    measure.barline = parseBarline(barlines[barlines.length - 1]);
   }
 
   return { measure, divisions };
@@ -792,25 +709,21 @@ interface PartInfo {
   abbreviation?: string;
 }
 
-function parsePartList(partListXml: unknown): PartInfo[] {
-  const partList = partListXml as Record<string, unknown>;
-  const scoreParts = ensureArray(partList['score-part']);
-
+function parsePartList(partListEl: Element): PartInfo[] {
+  const scoreParts = directChildren(partListEl, 'score-part');
   return scoreParts.map((sp) => {
-    const scorePart = sp as Record<string, unknown>;
     const info: PartInfo = {
-      id: String(scorePart['@_id'] ?? ''),
-      name: String(scorePart['part-name'] ?? ''),
+      id: getAttr(sp, 'id') ?? '',
+      name: getChildText(sp, 'part-name') ?? '',
     };
-    if (scorePart['part-abbreviation'] != null) {
-      info.abbreviation = String(scorePart['part-abbreviation']);
-    }
+    const abbr = getChildText(sp, 'part-abbreviation');
+    if (abbr != null) info.abbreviation = abbr;
     return info;
   });
 }
 
-function parsePart(partXml: Record<string, unknown>, partInfo: PartInfo): Part {
-  const measures = ensureArray(partXml.measure);
+function parsePart(partEl: Element, partInfo: PartInfo): Part {
+  const measureEls = directChildren(partEl, 'measure');
   const part: Part = {
     id: partInfo.id,
     name: partInfo.name,
@@ -818,22 +731,16 @@ function parsePart(partXml: Record<string, unknown>, partInfo: PartInfo): Part {
     measures: [],
   };
 
-  if (partInfo.abbreviation) {
-    part.abbreviation = partInfo.abbreviation;
-  }
+  if (partInfo.abbreviation) part.abbreviation = partInfo.abbreviation;
 
   let currentDivisions = 1;
-
-  for (const measureXml of measures) {
-    const { measure, divisions } = parseMeasure(
-      measureXml as Record<string, unknown>,
-      currentDivisions,
-    );
+  for (const measureEl of measureEls) {
+    const { measure, divisions } = parseMeasure(measureEl, currentDivisions);
     currentDivisions = divisions;
     part.measures.push(measure);
   }
 
-  // Determine staves count from attributes
+  // Determine staves count
   for (const m of part.measures) {
     if (m.attributes?.staves != null && m.attributes.staves > part.staves) {
       part.staves = m.attributes.staves;
@@ -845,28 +752,23 @@ function parsePart(partXml: Record<string, unknown>, partInfo: PartInfo): Part {
 
 // ─── Credits parsing ───
 
-function parseCredits(creditsXml: unknown[]): Credit[] {
+function parseCredits(scoreEl: Element): Credit[] {
+  const creditEls = directChildren(scoreEl, 'credit');
   const result: Credit[] = [];
 
-  for (const creditXml of creditsXml) {
-    const credit = creditXml as Record<string, unknown>;
-    const creditWords = ensureArray(credit['credit-words']);
-    if (creditWords.length === 0) continue;
+  for (const creditEl of creditEls) {
+    const wordEls = directChildren(creditEl, 'credit-words');
+    if (wordEls.length === 0) continue;
 
-    const firstWord = creditWords[0] as Record<string, unknown>;
-    const text = typeof firstWord === 'string'
-      ? firstWord
-      : String(firstWord['#text'] ?? firstWord);
+    const text = wordEls[0].textContent?.trim() ?? '';
 
-    // Try to determine credit type from credit-type element or heuristics
     let type: Credit['type'] = 'title';
-    if (credit['credit-type'] != null) {
-      const ct = String(credit['credit-type']).toLowerCase();
-      if (ct.includes('composer')) type = 'composer';
-      else if (ct.includes('arranger')) type = 'arranger';
-      else if (ct.includes('lyricist')) type = 'lyricist';
-      else if (ct.includes('subtitle')) type = 'subtitle';
-      else type = 'title';
+    const typeText = getChildText(creditEl, 'credit-type')?.toLowerCase();
+    if (typeText) {
+      if (typeText.includes('composer')) type = 'composer';
+      else if (typeText.includes('arranger')) type = 'arranger';
+      else if (typeText.includes('lyricist')) type = 'lyricist';
+      else if (typeText.includes('subtitle')) type = 'subtitle';
     }
 
     result.push({ type, text });
@@ -878,12 +780,6 @@ function parseCredits(creditsXml: unknown[]): Credit[] {
 // ─── Main parser class ───
 
 export class MusicXMLParser implements Pick<IScoreSerializer, 'fromMusicXML'> {
-  private parser: XMLParser;
-
-  constructor() {
-    this.parser = createXMLParser();
-  }
-
   /**
    * MusicXML 문자열을 파싱하여 ScoreData로 변환한다.
    * score-partwise 형식만 지원한다.
@@ -891,8 +787,10 @@ export class MusicXMLParser implements Pick<IScoreSerializer, 'fromMusicXML'> {
   fromMusicXML(xml: string): ScoreData {
     resetIdCounter();
 
-    const parsed = this.parser.parse(xml);
-    const scorePartwise = parsed['score-partwise'];
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'text/xml');
+    // Cast to global Element type for compatibility with both @xmldom and browser DOM
+    const scorePartwise = doc.getElementsByTagName('score-partwise')[0] as unknown as Element;
 
     if (!scorePartwise) {
       throw new Error(
@@ -900,34 +798,28 @@ export class MusicXMLParser implements Pick<IScoreSerializer, 'fromMusicXML'> {
       );
     }
 
-    // Parse part-list for metadata
-    const partInfos = scorePartwise['part-list']
-      ? parsePartList(scorePartwise['part-list'])
-      : [];
+    // Parse part-list
+    const partListEl = directChildren(scorePartwise, 'part-list')[0];
+    const partInfos = partListEl ? parsePartList(partListEl) : [];
 
-    // Build a lookup map for part info by id
     const partInfoMap = new Map<string, PartInfo>();
     for (const info of partInfos) {
       partInfoMap.set(info.id, info);
     }
 
     // Parse parts
-    const partsXml = ensureArray(scorePartwise.part);
-    const parts: Part[] = partsXml.map((partXml) => {
-      const p = partXml as Record<string, unknown>;
-      const partId = String(p['@_id'] ?? '');
+    const partEls = directChildren(scorePartwise, 'part');
+    const parts: Part[] = partEls.map((partEl) => {
+      const partId = getAttr(partEl, 'id') ?? '';
       const info = partInfoMap.get(partId) ?? { id: partId, name: '' };
-      return parsePart(p, info);
+      return parsePart(partEl, info);
     });
 
     // Parse credits
-    const creditsXml = ensureArray(scorePartwise.credit);
-    const credits = creditsXml.length > 0 ? parseCredits(creditsXml) : undefined;
+    const credits = parseCredits(scorePartwise);
 
     const result: ScoreData = { parts };
-    if (credits && credits.length > 0) {
-      result.credits = credits;
-    }
+    if (credits.length > 0) result.credits = credits;
 
     return result;
   }

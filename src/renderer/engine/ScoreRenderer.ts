@@ -43,6 +43,9 @@ import {
   Volta,
   Accidental,
   Dot,
+  Repetition,
+  StaveText,
+  ChordSymbol,
   type RenderContext,
 } from 'vexflow';
 
@@ -59,6 +62,7 @@ import type {
   Barline as BarlineType,
   EndingInfo,
   Direction,
+  Harmony,
 } from '@shared/types';
 
 import {
@@ -314,6 +318,11 @@ export class ScoreRenderer {
 
       // Direction 렌더링 (다이나믹, 템포 등)
       this.renderDirections(measure.directions, staves);
+
+      // Harmony 렌더링 (코드 네임)
+      if (measure.harmonies?.length) {
+        this.renderHarmonies(measure.harmonies, measureNotes.vexNotesByVoice, staves);
+      }
 
       // 볼타 괄호 렌더링
       if (measure.barline?.ending) {
@@ -1098,13 +1107,101 @@ export class ScoreRenderer {
       const stave = staves[staffIdx] ?? staves[0];
       if (!stave) continue;
 
-      switch (dir.type.kind) {
-        case 'tempo':
-          stave.setTempo({ bpm: dir.type.bpm, name: dir.type.text ?? '' }, 0);
-          break;
-        // rehearsal, words, dynamic, wedge, pedal — post-MVP에서 텍스트 렌더링 구현
-        default:
-          break;
+      try {
+        switch (dir.type.kind) {
+          case 'tempo':
+            stave.setTempo({ bpm: dir.type.bpm, name: dir.type.text ?? '' }, 0);
+            break;
+          case 'dynamic': {
+            const dynText = new StaveText(dir.type.value, StaveText.Position.BELOW);
+            dynText.setFont('Times', 14, 'bold italic');
+            stave.addModifier(dynText);
+            break;
+          }
+          case 'rehearsal': {
+            const rehText = new StaveText(dir.type.text, StaveText.Position.ABOVE);
+            rehText.setFont('Arial', 14, 'bold');
+            stave.addModifier(rehText);
+            break;
+          }
+          case 'words': {
+            const pos = dir.placement === 'below'
+              ? StaveText.Position.BELOW
+              : StaveText.Position.ABOVE;
+            const wordsText = new StaveText(dir.type.text, pos);
+            wordsText.setFont('Times', 12, 'italic');
+            stave.addModifier(wordsText);
+            break;
+          }
+          case 'segno':
+            stave.setRepetitionType(Repetition.type.SEGNO_LEFT);
+            break;
+          case 'coda':
+            stave.setRepetitionType(Repetition.type.CODA_LEFT);
+            break;
+          // wedge, pedal: require cross-measure tracking — deferred
+          default:
+            break;
+        }
+      } catch {
+        // Skip rendering errors for individual directions
+      }
+    }
+  }
+
+  // ─── Harmony 렌더링 ───
+
+  /** MusicXML kind → display suffix */
+  private static readonly HARMONY_KIND_SUFFIX: Record<string, string> = {
+    major: '', minor: 'm', dominant: '7', 'major-seventh': 'maj7',
+    'minor-seventh': 'm7', diminished: 'dim', augmented: 'aug',
+    'diminished-seventh': 'dim7', 'half-diminished': 'm7b5',
+    'major-minor': 'mMaj7', 'major-sixth': '6', 'minor-sixth': 'm6',
+    suspended: 'sus', 'suspended-second': 'sus2', 'suspended-fourth': 'sus4',
+    power: '5', none: '',
+  };
+
+  private static readonly ALTER_SYMBOL: Record<number, string> = {
+    [-2]: '𝄫', [-1]: '♭', [0]: '', [1]: '♯', [2]: '𝄪',
+  };
+
+  private renderHarmonies(
+    harmonies: Harmony[],
+    vexNotesByVoice: StaveNote[][],
+    staves: Stave[],
+  ): void {
+    if (!this.context) return;
+
+    // Get the first voice's notes to attach chord symbols
+    const firstVoiceNotes = vexNotesByVoice[0];
+    if (!firstVoiceNotes || firstVoiceNotes.length === 0) return;
+
+    for (let hIdx = 0; hIdx < harmonies.length; hIdx++) {
+      const h = harmonies[hIdx];
+      // Attach to the note closest to this harmony's position
+      const noteIdx = Math.min(hIdx, firstVoiceNotes.length - 1);
+      const targetNote = firstVoiceNotes[noteIdx];
+
+      try {
+        const rootAlter = h.root.alter
+          ? (ScoreRenderer.ALTER_SYMBOL[h.root.alter] ?? '')
+          : '';
+        const kindSuffix = ScoreRenderer.HARMONY_KIND_SUFFIX[h.kind] ?? h.kind;
+
+        let chordText = `${h.root.step}${rootAlter}${kindSuffix}`;
+        if (h.bass) {
+          const bassAlter = h.bass.alter
+            ? (ScoreRenderer.ALTER_SYMBOL[h.bass.alter] ?? '')
+            : '';
+          chordText += `/${h.bass.step}${bassAlter}`;
+        }
+
+        const cs = new ChordSymbol();
+        cs.addText(chordText);
+        cs.setFont('Arial', 12, 'normal');
+        targetNote.addModifier(cs);
+      } catch {
+        // Skip chord symbol rendering errors
       }
     }
   }

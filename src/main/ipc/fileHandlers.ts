@@ -62,6 +62,27 @@ async function extractMxl(filePath: string): Promise<string> {
   throw new Error('.mxl 파일에서 MusicXML 콘텐츠를 찾을 수 없습니다.');
 }
 
+/** file:save 요청 데이터 (renderer → main) */
+interface FileSaveIPCRequest {
+  xmlContent: string;
+}
+
+/** file:save 응답 데이터 */
+interface FileSaveIPCResponse {
+  savedPath: string;
+}
+
+/** file:export 요청 데이터 (renderer → main) */
+interface FileExportIPCRequest {
+  format: 'pdf' | 'png';
+  binaryData: number[];
+}
+
+/** file:export 응답 데이터 */
+interface FileExportIPCResponse {
+  exportedPath: string;
+}
+
 /**
  * 파일 관련 IPC 핸들러를 등록한다.
  */
@@ -120,6 +141,82 @@ export function registerFileHandlers(): void {
           error: createIPCError(
             'FILE_READ_ERROR',
             `파일을 읽을 수 없습니다: ${message}`,
+            err,
+          ),
+        };
+      }
+    },
+  );
+
+  // file:save - 네이티브 파일 저장 다이얼로그 + MusicXML 쓰기
+  registerIPCHandler<FileSaveIPCRequest, FileSaveIPCResponse | null>(
+    FILE_CHANNELS.SAVE,
+    async (req): Promise<IPCResponse<FileSaveIPCResponse | null>> => {
+      const result = await dialog.showSaveDialog({
+        title: 'MusicXML 파일 저장',
+        filters: [
+          { name: 'MusicXML', extensions: ['musicxml', 'xml'] },
+        ],
+        defaultPath: 'score.musicxml',
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { success: true, data: null };
+      }
+
+      try {
+        await fs.promises.writeFile(result.filePath, req.xmlContent, 'utf-8');
+        return {
+          success: true,
+          data: { savedPath: result.filePath },
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        return {
+          success: false,
+          error: createIPCError(
+            'FILE_WRITE_ERROR',
+            `파일을 저장할 수 없습니다: ${message}`,
+            err,
+          ),
+        };
+      }
+    },
+  );
+
+  // file:export - 네이티브 파일 저장 다이얼로그 + PDF/PNG 바이너리 쓰기
+  registerIPCHandler<FileExportIPCRequest, FileExportIPCResponse | null>(
+    FILE_CHANNELS.EXPORT,
+    async (req): Promise<IPCResponse<FileExportIPCResponse | null>> => {
+      const isPdf = req.format === 'pdf';
+      const result = await dialog.showSaveDialog({
+        title: isPdf ? 'PDF로 내보내기' : 'PNG로 내보내기',
+        filters: [
+          isPdf
+            ? { name: 'PDF', extensions: ['pdf'] }
+            : { name: 'PNG', extensions: ['png'] },
+        ],
+        defaultPath: isPdf ? 'score.pdf' : 'score.png',
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { success: true, data: null };
+      }
+
+      try {
+        const buffer = Buffer.from(req.binaryData);
+        await fs.promises.writeFile(result.filePath, buffer);
+        return {
+          success: true,
+          data: { exportedPath: result.filePath },
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        return {
+          success: false,
+          error: createIPCError(
+            'FILE_WRITE_ERROR',
+            `파일을 내보낼 수 없습니다: ${message}`,
             err,
           ),
         };

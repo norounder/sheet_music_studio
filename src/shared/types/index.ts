@@ -77,6 +77,7 @@ export type {
   DirectionType,
   Direction,
   Lyric,
+  Harmony,
   Measure,
   Part,
   ScoreData,
