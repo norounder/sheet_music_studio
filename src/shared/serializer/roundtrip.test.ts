@@ -555,6 +555,208 @@ describe('MusicXML Round-Trip Tests', () => {
     expectHighMatchRate(comparison, '크레딧');
   });
 
+  // 11. Multi-part ensemble: Two instruments with different key/clef
+  it('round-trips multi-part ensemble (다파트 앙상블)', () => {
+    const original: ScoreData = {
+      parts: [
+        {
+          id: 'P1', name: 'Violin', staves: 1,
+          measures: [{
+            number: 1,
+            attributes: {
+              divisions: 2,
+              keySignature: { fifths: 1, mode: 'major' },
+              timeSignature: { beats: 4, beatType: 4 },
+              clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+            },
+            elements: [
+              makeNote({ pitch: { step: 'G', octave: 5 }, duration: { divisions: 2, noteType: 'quarter', dots: 0 } }),
+              makeNote({ pitch: { step: 'A', octave: 5 }, duration: { divisions: 2, noteType: 'quarter', dots: 0 } }),
+              makeNote({ pitch: { step: 'B', octave: 5 }, duration: { divisions: 2, noteType: 'quarter', dots: 0 } }),
+              makeNote({ pitch: { step: 'A', octave: 5 }, duration: { divisions: 2, noteType: 'quarter', dots: 0 } }),
+            ],
+            directions: [],
+          }],
+        },
+        {
+          id: 'P2', name: 'Cello', staves: 1,
+          measures: [{
+            number: 1,
+            attributes: {
+              divisions: 2,
+              keySignature: { fifths: 1, mode: 'major' },
+              timeSignature: { beats: 4, beatType: 4 },
+              clef: [{ sign: 'F', line: 4, staffNumber: 1 }],
+            },
+            elements: [
+              makeNote({ pitch: { step: 'G', octave: 3 }, duration: { divisions: 4, noteType: 'half', dots: 0 } }),
+              makeNote({ pitch: { step: 'D', octave: 3 }, duration: { divisions: 4, noteType: 'half', dots: 0 } }),
+            ],
+            directions: [],
+          }],
+        },
+      ],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '다파트 앙상블');
+  });
+
+  // 12. Dotted notes and mixed durations
+  it('round-trips dotted notes and mixed durations (점음표 혼합)', () => {
+    const original: ScoreData = {
+      parts: [{
+        id: 'P1', name: 'Piano', staves: 1,
+        measures: [{
+          number: 1,
+          attributes: {
+            divisions: 4,
+            keySignature: { fifths: 0, mode: 'major' },
+            timeSignature: { beats: 4, beatType: 4 },
+            clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+          },
+          elements: [
+            makeNote({ pitch: { step: 'C', octave: 4 }, duration: { divisions: 6, noteType: 'quarter', dots: 1 } }),
+            makeNote({ pitch: { step: 'D', octave: 4 }, duration: { divisions: 2, noteType: 'eighth', dots: 0 } }),
+            makeNote({ pitch: { step: 'E', octave: 4 }, duration: { divisions: 4, noteType: 'quarter', dots: 0 } }),
+            makeNote({ pitch: { step: 'F', octave: 4 }, duration: { divisions: 3, noteType: 'eighth', dots: 1 } }),
+            makeNote({ pitch: { step: 'G', octave: 4 }, duration: { divisions: 1, noteType: '16th', dots: 0 } }),
+          ],
+          directions: [],
+        }],
+      }],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '점음표 혼합');
+  });
+
+  // 13. Chord notes (same time)
+  it('round-trips chord notes (화음)', () => {
+    const original: ScoreData = {
+      parts: [{
+        id: 'P1', name: 'Piano', staves: 1,
+        measures: [{
+          number: 1,
+          attributes: {
+            divisions: 1,
+            keySignature: { fifths: 0, mode: 'major' },
+            timeSignature: { beats: 4, beatType: 4 },
+            clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+          },
+          elements: [
+            makeNote({ pitch: { step: 'C', octave: 4 } }),
+            makeNote({ pitch: { step: 'E', octave: 4 }, chord: true }),
+            makeNote({ pitch: { step: 'G', octave: 4 }, chord: true }),
+            makeNote({ pitch: { step: 'D', octave: 4 } }),
+            makeNote({ pitch: { step: 'F', octave: 4 } }),
+            makeNote({ pitch: { step: 'C', octave: 5 } }),
+          ],
+          directions: [],
+        }],
+      }],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '화음');
+  });
+
+  // 14. Fingering annotations
+  it('round-trips fingering (운지법)', () => {
+    const original: ScoreData = {
+      parts: [{
+        id: 'P1', name: 'Piano', staves: 1,
+        measures: [{
+          number: 1,
+          attributes: {
+            divisions: 1,
+            keySignature: { fifths: 0, mode: 'major' },
+            timeSignature: { beats: 4, beatType: 4 },
+            clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+          },
+          elements: [
+            makeNote({ pitch: { step: 'C', octave: 4 }, fingering: { finger: 1 } }),
+            makeNote({ pitch: { step: 'D', octave: 4 }, fingering: { finger: 2 } }),
+            makeNote({ pitch: { step: 'E', octave: 4 }, fingering: { finger: 3 } }),
+            makeNote({ pitch: { step: 'F', octave: 4 } }),
+          ],
+          directions: [],
+        }],
+      }],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '운지법');
+  });
+
+  // 15. Multiple measures with rests
+  it('round-trips score with many measures and rests', () => {
+    const measures: Measure[] = [];
+    for (let i = 1; i <= 8; i++) {
+      const elements: MeasureElement[] = i % 2 === 1
+        ? [
+            makeNote({ pitch: { step: 'C', octave: 4 } }),
+            makeNote({ pitch: { step: 'D', octave: 4 } }),
+            makeRest(),
+            makeNote({ pitch: { step: 'E', octave: 4 } }),
+          ]
+        : [
+            makeRest({ duration: { divisions: 2, noteType: 'half', dots: 0 } }),
+            makeNote({ pitch: { step: 'G', octave: 4 }, duration: { divisions: 2, noteType: 'half', dots: 0 } }),
+          ];
+      measures.push({
+        number: i,
+        ...(i === 1
+          ? {
+              attributes: {
+                divisions: 1,
+                keySignature: { fifths: -2, mode: 'minor' },
+                timeSignature: { beats: 4, beatType: 4 },
+                clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+              },
+            }
+          : {}),
+        elements,
+        directions: [],
+      });
+    }
+
+    const original: ScoreData = {
+      parts: [{ id: 'P1', name: 'Flute', staves: 1, measures }],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '8마디+쉼표');
+  });
+
+  // 16. Accidentals: sharps, flats, double sharps, double flats
+  it('round-trips accidentals (임시표)', () => {
+    const original: ScoreData = {
+      parts: [{
+        id: 'P1', name: 'Piano', staves: 1,
+        measures: [{
+          number: 1,
+          attributes: {
+            divisions: 1,
+            keySignature: { fifths: 0, mode: 'major' },
+            timeSignature: { beats: 4, beatType: 4 },
+            clef: [{ sign: 'G', line: 2, staffNumber: 1 }],
+          },
+          elements: [
+            makeNote({ pitch: { step: 'F', octave: 4, alter: 1 } }),  // F#
+            makeNote({ pitch: { step: 'B', octave: 4, alter: -1 } }), // Bb
+            makeNote({ pitch: { step: 'C', octave: 5, alter: 2 } }),  // C##
+            makeNote({ pitch: { step: 'E', octave: 4, alter: -2 } }), // Ebb
+          ],
+          directions: [],
+        }],
+      }],
+    };
+
+    const { comparison } = roundTrip(original);
+    expectHighMatchRate(comparison, '임시표');
+  });
+
   // Aggregate match rate across all scenarios
   it('achieves ≥ 99.5% field-level match rate across all scenarios', () => {
     const scenarios: { name: string; score: ScoreData }[] = [

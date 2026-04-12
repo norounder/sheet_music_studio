@@ -550,6 +550,163 @@ describe('noteCommands', () => {
     });
   });
 
+  // ─── Multi-part operations ───
+
+  describe('multi-part score operations', () => {
+    function makeMultiPartScore(): ScoreData {
+      return {
+        parts: [
+          {
+            id: 'P1', name: 'Violin', staves: 1,
+            measures: [{
+              number: 1,
+              attributes: { divisions: 1 },
+              elements: [
+                { type: 'note', id: 'v1', pitch: { step: 'A', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [],
+            }],
+          },
+          {
+            id: 'P2', name: 'Cello', staves: 1,
+            measures: [{
+              number: 1,
+              attributes: { divisions: 1 },
+              elements: [
+                { type: 'note', id: 'c1', pitch: { step: 'C', octave: 3 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [],
+            }],
+          },
+        ],
+      };
+    }
+
+    it('should delete note from second part without affecting first', () => {
+      const sd = makeMultiPartScore();
+      const cmd = createDeleteNoteCommand(sd, 'c1');
+      const after = cmd.execute(sd);
+
+      expect(after.parts[0].measures[0].elements).toHaveLength(1); // violin untouched
+      expect(after.parts[1].measures[0].elements).toHaveLength(0); // cello note deleted
+    });
+
+    it('should modify note in first part without affecting second', () => {
+      const sd = makeMultiPartScore();
+      const cmd = createModifyPitchCommand(sd, 'v1', { step: 'B' });
+      const after = cmd.execute(sd);
+
+      expect((after.parts[0].measures[0].elements[0] as NoteElement).pitch.step).toBe('B');
+      expect((after.parts[1].measures[0].elements[0] as NoteElement).pitch.step).toBe('C'); // unchanged
+    });
+
+    it('should add note to second part', () => {
+      const sd = makeMultiPartScore();
+      const note = makeNote('c2', 'D', 3);
+      const cmd = createAddNoteCommand(1, 0, note);
+      const after = cmd.execute(sd);
+
+      expect(after.parts[1].measures[0].elements).toHaveLength(2);
+      expect(after.parts[0].measures[0].elements).toHaveLength(1); // unchanged
+    });
+  });
+
+  // ─── Add to empty measure ───
+
+  describe('add note to empty measure', () => {
+    it('should add note to measure with no elements', () => {
+      const sd: ScoreData = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [{ number: 1, attributes: { divisions: 1 }, elements: [], directions: [] }],
+        }],
+      };
+      const note = makeNote('n1', 'C', 4);
+      const cmd = createAddNoteCommand(0, 0, note);
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures[0].elements).toHaveLength(1);
+
+      const restored = cmd.undo(after);
+      expect(restored.parts[0].measures[0].elements).toHaveLength(0);
+    });
+  });
+
+  // ─── Immutability verification ───
+
+  describe('immutability', () => {
+    it('should not mutate original scoreData on addNote', () => {
+      const sd = makeTestScoreData();
+      const origLen = sd.parts[0].measures[0].elements.length;
+      const note = makeNote('n3', 'E', 4);
+      const cmd = createAddNoteCommand(0, 0, note);
+      cmd.execute(sd);
+      expect(sd.parts[0].measures[0].elements.length).toBe(origLen);
+    });
+
+    it('should not mutate original scoreData on deleteNote', () => {
+      const sd = makeTestScoreData();
+      const origLen = sd.parts[0].measures[0].elements.length;
+      const cmd = createDeleteNoteCommand(sd, 'n1');
+      cmd.execute(sd);
+      expect(sd.parts[0].measures[0].elements.length).toBe(origLen);
+    });
+
+    it('should not mutate original scoreData on modifyPitch', () => {
+      const sd = makeTestScoreData();
+      const origStep = (sd.parts[0].measures[0].elements[0] as NoteElement).pitch.step;
+      const cmd = createModifyPitchCommand(sd, 'n1', { step: 'G' });
+      cmd.execute(sd);
+      expect((sd.parts[0].measures[0].elements[0] as NoteElement).pitch.step).toBe(origStep);
+    });
+
+    it('should not mutate original scoreData on modifyDuration', () => {
+      const sd = makeTestScoreData();
+      const origType = (sd.parts[0].measures[0].elements[0] as NoteElement).duration.noteType;
+      const cmd = createModifyDurationCommand(sd, 'n1', { noteType: 'whole' });
+      cmd.execute(sd);
+      expect((sd.parts[0].measures[0].elements[0] as NoteElement).duration.noteType).toBe(origType);
+    });
+  });
+
+  // ─── Error handling ───
+
+  describe('error handling', () => {
+    it('should throw when modifying non-existent note', () => {
+      const sd = makeTestScoreData();
+      expect(() => createModifyNoteCommand(sd, 'nonexistent', { voice: 2 })).toThrow('Element not found');
+    });
+
+    it('should throw when modifying pitch on non-existent note', () => {
+      const sd = makeTestScoreData();
+      expect(() => createModifyPitchCommand(sd, 'nonexistent', { step: 'G' })).toThrow('Element not found');
+    });
+
+    it('should throw when modifying duration on non-existent note', () => {
+      const sd = makeTestScoreData();
+      expect(() => createModifyDurationCommand(sd, 'nonexistent', { noteType: 'half' })).toThrow('Element not found');
+    });
+
+    it('should throw when deleting rest with non-existent ID', () => {
+      const sd = makeTestScoreData();
+      expect(() => createDeleteRestCommand(sd, 'nonexistent')).toThrow('Element not found');
+    });
+
+    it('should throw when deleteNoteWithRest on non-existent ID', () => {
+      const sd = makeTestScoreData();
+      expect(() => createDeleteNoteWithRestCommand(sd, 'nonexistent')).toThrow('Element not found');
+    });
+
+    it('should throw when convertRestToNote on non-existent ID', () => {
+      const sd = makeTestScoreData();
+      expect(() => createConvertRestToNoteCommand(sd, 'nonexistent', { step: 'C', octave: 4 })).toThrow('Element not found');
+    });
+
+    it('should throw when modifyDurationWithFill on non-existent ID', () => {
+      const sd = makeTestScoreData();
+      expect(() => createModifyDurationWithFillCommand(sd, 'nonexistent', { noteType: 'half' })).toThrow('Element not found');
+    });
+  });
+
   describe('createConvertRestToNoteCommand', () => {
     it('should convert a rest to a note with given pitch', () => {
       const sd: ScoreData = {

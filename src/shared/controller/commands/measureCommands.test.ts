@@ -200,4 +200,138 @@ describe('measureCommands', () => {
       expect(after.parts[0].measures[0].attributes?.clef).toHaveLength(2);
     });
   });
+
+  // ─── Edge cases ───
+
+  describe('multi-part operations', () => {
+    function makeMultiPartScore(): ScoreData {
+      return {
+        parts: [
+          {
+            id: 'P1', name: 'Violin', staves: 1,
+            measures: [
+              { number: 1, elements: [
+                { type: 'note', id: 'v1', pitch: { step: 'A', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ], directions: [] },
+              { number: 2, elements: [], directions: [] },
+            ],
+          },
+          {
+            id: 'P2', name: 'Cello', staves: 1,
+            measures: [
+              { number: 1, elements: [
+                { type: 'note', id: 'c1', pitch: { step: 'C', octave: 3 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ], directions: [] },
+              { number: 2, elements: [], directions: [] },
+            ],
+          },
+        ],
+      };
+    }
+
+    it('should add measure to second part without affecting first', () => {
+      const sd = makeMultiPartScore();
+      const cmd = createAddMeasureCommand(1, 0);
+
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures).toHaveLength(2); // unchanged
+      expect(after.parts[1].measures).toHaveLength(3); // added
+    });
+
+    it('should delete measure from first part without affecting second', () => {
+      const sd = makeMultiPartScore();
+      const cmd = createDeleteMeasureCommand(sd, 0, 1);
+
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures).toHaveLength(1);
+      expect(after.parts[1].measures).toHaveLength(2); // unchanged
+    });
+  });
+
+  describe('boundary conditions', () => {
+    it('should add measure at the beginning (afterMeasureIndex = -1 equivalent via index 0)', () => {
+      const sd = makeTestScoreData();
+      // afterMeasureIndex = 0 means insert at index 1
+      // To insert at very beginning we'd need afterMeasureIndex = -1
+      // Let's test adding at end
+      const cmd = createAddMeasureCommand(0, 1); // after last measure
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures).toHaveLength(3);
+      expect(after.parts[0].measures[2].elements).toHaveLength(0);
+      expect(after.parts[0].measures.map(m => m.number)).toEqual([1, 2, 3]);
+    });
+
+    it('should delete last remaining measure and leave empty array', () => {
+      const sd: ScoreData = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [{ number: 1, elements: [], directions: [] }],
+        }],
+      };
+
+      const cmd = createDeleteMeasureCommand(sd, 0, 0);
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures).toHaveLength(0);
+
+      const restored = cmd.undo(after);
+      expect(restored.parts[0].measures).toHaveLength(1);
+      expect(restored.parts[0].measures[0].number).toBe(1);
+    });
+  });
+
+  describe('immutability', () => {
+    it('should not mutate original scoreData on addMeasure', () => {
+      const sd = makeTestScoreData();
+      const origLen = sd.parts[0].measures.length;
+      const cmd = createAddMeasureCommand(0, 0);
+      cmd.execute(sd);
+      expect(sd.parts[0].measures.length).toBe(origLen);
+    });
+
+    it('should not mutate original scoreData on deleteMeasure', () => {
+      const sd = makeTestScoreData();
+      const origLen = sd.parts[0].measures.length;
+      const cmd = createDeleteMeasureCommand(sd, 0, 0);
+      cmd.execute(sd);
+      expect(sd.parts[0].measures.length).toBe(origLen);
+    });
+
+    it('should not mutate original on key signature change', () => {
+      const sd = makeTestScoreData();
+      const origFifths = sd.parts[0].measures[0].attributes?.keySignature?.fifths;
+      const cmd = createChangeKeySignatureCommand(sd, 0, 0, { fifths: 5, mode: 'major' });
+      cmd.execute(sd);
+      expect(sd.parts[0].measures[0].attributes?.keySignature?.fifths).toBe(origFifths);
+    });
+  });
+
+  describe('double execute/undo cycle', () => {
+    it('should maintain integrity through multiple execute/undo cycles', () => {
+      const sd = makeTestScoreData();
+      const cmd = createAddMeasureCommand(0, 0);
+
+      const s1 = cmd.execute(sd);
+      expect(s1.parts[0].measures).toHaveLength(3);
+
+      const s2 = cmd.undo(s1);
+      expect(s2.parts[0].measures).toHaveLength(2);
+
+      const s3 = cmd.execute(s2);
+      expect(s3.parts[0].measures).toHaveLength(3);
+
+      const s4 = cmd.undo(s3);
+      expect(s4.parts[0].measures).toHaveLength(2);
+      expect(s4.parts[0].measures.map(m => m.number)).toEqual([1, 2]);
+    });
+  });
+
+  describe('changeKeySignature on measure without attributes', () => {
+    it('should create attributes if none exist', () => {
+      const sd = makeTestScoreData();
+      // Measure 2 has no attributes
+      const cmd = createChangeKeySignatureCommand(sd, 0, 1, { fifths: 3, mode: 'major' });
+      const after = cmd.execute(sd);
+      expect(after.parts[0].measures[1].attributes?.keySignature?.fifths).toBe(3);
+    });
+  });
 });

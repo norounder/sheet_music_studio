@@ -374,4 +374,134 @@ describe('ScoreController', () => {
       expect(() => ctrl.setTempo(120)).toThrow('not implemented');
     });
   });
+
+  // ─── Integration: open → edit → undo → save round-trip ───
+
+  describe('integration: open → edit → undo → save', () => {
+    it('should produce valid MusicXML after edit + save', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+
+      const originalParts = ctrl.getScoreData()!.parts;
+      const cmd = createTestCommand(
+        'add credit',
+        (sd) => ({ ...sd, credits: [{ type: 'title' as const, text: 'My Title' }] }),
+        (sd) => ({ ...sd, credits: undefined }),
+      );
+
+      ctrl.executeCommand(cmd);
+      const xml = ctrl.saveFile();
+      expect(xml).toContain('<credit');
+      expect(xml).toContain('My Title');
+    });
+
+    it('should produce original-like XML after edit + undo + save', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+
+      // Capture original parts before executing command
+      const originalParts = ctrl.getScoreData()!.parts;
+
+      const cmd = createTestCommand(
+        'clear parts',
+        (sd) => ({ ...sd, parts: [] }),
+        (sd) => ({ ...sd, parts: originalParts }),
+      );
+
+      ctrl.executeCommand(cmd);
+      expect(ctrl.getScoreData()!.parts).toHaveLength(0);
+
+      ctrl.undo();
+      const xmlAfterUndo = ctrl.saveFile();
+      // Should contain Piano part again
+      expect(xmlAfterUndo).toContain('Piano');
+    });
+
+    it('should support long undo chain (10 commands)', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+
+      const commands: EditCommand[] = [];
+      for (let i = 0; i < 10; i++) {
+        const cmd = createTestCommand(
+          `cmd-${i}`,
+          (sd) => ({
+            ...sd,
+            credits: [{ type: 'title' as const, text: `Step ${i}` }],
+          }),
+          (sd) => ({
+            ...sd,
+            credits: i === 0 ? undefined : [{ type: 'title' as const, text: `Step ${i - 1}` }],
+          }),
+        );
+        commands.push(cmd);
+        ctrl.executeCommand(cmd);
+      }
+
+      expect(ctrl.getUndoStack()).toHaveLength(10);
+      expect(ctrl.getScoreData()!.credits?.[0].text).toBe('Step 9');
+
+      // Undo all 10
+      for (let i = 0; i < 10; i++) {
+        ctrl.undo();
+      }
+      expect(ctrl.canUndo()).toBe(false);
+      expect(ctrl.getRedoStack()).toHaveLength(10);
+    });
+  });
+
+  // ─── Edge cases ───
+
+  describe('edge: undo/redo when stacks are empty', () => {
+    it('undo on empty stack should be no-op', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+      const before = ctrl.getScoreData();
+      ctrl.undo();
+      expect(ctrl.getScoreData()).toBe(before);
+    });
+
+    it('redo on empty stack should be no-op', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+      const before = ctrl.getScoreData();
+      ctrl.redo();
+      expect(ctrl.getScoreData()).toBe(before);
+    });
+  });
+
+  describe('multiple listeners', () => {
+    it('should notify all listeners on change', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      ctrl.onChange(cb1);
+      ctrl.onChange(cb2);
+
+      const cmd = createTestCommand('noop', (sd) => sd, (sd) => sd);
+      ctrl.executeCommand(cmd);
+
+      expect(cb1).toHaveBeenCalledTimes(1);
+      expect(cb2).toHaveBeenCalledTimes(1);
+    });
+
+    it('unsubscribing one listener should not affect others', () => {
+      const ctrl = new ScoreController();
+      ctrl.openFile(SIMPLE_MUSICXML);
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      const unsub1 = ctrl.onChange(cb1);
+      ctrl.onChange(cb2);
+
+      unsub1();
+      const cmd = createTestCommand('noop', (sd) => sd, (sd) => sd);
+      ctrl.executeCommand(cmd);
+
+      expect(cb1).not.toHaveBeenCalled();
+      expect(cb2).toHaveBeenCalledTimes(1);
+    });
+  });
 });

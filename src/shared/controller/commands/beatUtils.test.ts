@@ -286,4 +286,170 @@ describe('beatUtils', () => {
       expect(getMeasureDivisions(m)).toBe(1);
     });
   });
+
+  // ─── Complex time signatures ───
+
+  describe('complex time signatures', () => {
+    it('should calculate 5/4 with ppq=1', () => {
+      const m = makeMeasure(1, 5, 4);
+      expect(getMeasureTotalDivisions(m)).toBe(5);
+    });
+
+    it('should calculate 7/8 with ppq=2', () => {
+      const m = makeMeasure(2, 7, 8);
+      expect(getMeasureTotalDivisions(m)).toBe(7);
+    });
+
+    it('should calculate 2/2 with ppq=1', () => {
+      const m = makeMeasure(1, 2, 2);
+      expect(getMeasureTotalDivisions(m)).toBe(4); // same as 4/4 in quarter-divisions
+    });
+
+    it('should calculate 12/8 with ppq=2', () => {
+      const m = makeMeasure(2, 12, 8);
+      expect(getMeasureTotalDivisions(m)).toBe(12);
+    });
+  });
+
+  describe('noteTypeToDivisions with higher ppq', () => {
+    it('should calculate quarter note with ppq=4', () => {
+      expect(noteTypeToDivisions('quarter', 0, 4)).toBe(4);
+    });
+
+    it('should calculate 16th note with ppq=4', () => {
+      expect(noteTypeToDivisions('16th', 0, 4)).toBe(1);
+    });
+
+    it('should calculate dotted 8th with ppq=4', () => {
+      // eighth = 2, dot = 1, total = 3
+      expect(noteTypeToDivisions('eighth', 1, 4)).toBe(3);
+    });
+
+    it('should calculate 32nd note with ppq=1', () => {
+      expect(noteTypeToDivisions('32nd', 0, 1)).toBe(0.125);
+    });
+
+    it('should calculate 64th note with ppq=1', () => {
+      expect(noteTypeToDivisions('64th', 0, 1)).toBe(0.0625);
+    });
+  });
+
+  describe('divisionsToNoteType edge cases', () => {
+    it('should find dotted half for 6 divisions (ppq=2)', () => {
+      const result = divisionsToNoteType(6, 2);
+      expect(result).toEqual({ noteType: 'half', dots: 1 });
+    });
+
+    it('should find double-dotted quarter for 1.75 divisions (ppq=1)', () => {
+      const result = divisionsToNoteType(1.75, 1);
+      expect(result).toEqual({ noteType: 'quarter', dots: 2 });
+    });
+
+    it('should return null for 0 divisions', () => {
+      const result = divisionsToNoteType(0, 1);
+      expect(result).toBeNull();
+    });
+
+    it('should find eighth for 1 division (ppq=2)', () => {
+      const result = divisionsToNoteType(1, 2);
+      expect(result).toEqual({ noteType: 'eighth', dots: 0 });
+    });
+  });
+
+  describe('fillWithRests edge cases', () => {
+    it('should handle 0 divisions (no rests)', () => {
+      const rests = fillWithRests(0, 1);
+      expect(rests).toHaveLength(0);
+    });
+
+    it('should fill 5 divisions (ppq=1) as whole + quarter', () => {
+      const rests = fillWithRests(5, 1);
+      const total = rests.reduce((s, r) => s + r.duration.divisions, 0);
+      expect(total).toBe(5);
+      // Should be 2 rests: whole (4) + quarter (1), or dotted whole (6) is too big
+      expect(rests.length).toBeGreaterThanOrEqual(1);
+      expect(rests.length).toBeLessThanOrEqual(3);
+    });
+
+    it('should fill 7 divisions (ppq=2) correctly', () => {
+      const rests = fillWithRests(7, 2);
+      const total = rests.reduce((s, r) => s + r.duration.divisions, 0);
+      expect(total).toBe(7);
+    });
+
+    it('should generate rests preserving voice and staff', () => {
+      const rests = fillWithRests(2, 1, 3, 2);
+      for (const r of rests) {
+        expect(r.voice).toBe(3);
+        expect(r.staff).toBe(2);
+      }
+    });
+  });
+
+  describe('getUsedDivisions with forward/backup', () => {
+    it('should add forward duration', () => {
+      const m: Measure = {
+        number: 1,
+        attributes: { divisions: 1 },
+        elements: [
+          { type: 'note', id: 'n1', pitch: { step: 'C', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+          { type: 'forward', duration: { divisions: 1, noteType: 'quarter', dots: 0 } } as any,
+        ],
+        directions: [],
+      };
+      expect(getUsedDivisions(m)).toBe(2);
+    });
+
+    it('should subtract backup duration', () => {
+      const m: Measure = {
+        number: 1,
+        attributes: { divisions: 1 },
+        elements: [
+          { type: 'note', id: 'n1', pitch: { step: 'C', octave: 4 }, duration: { divisions: 2, noteType: 'half', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+          { type: 'backup', duration: { divisions: 2, noteType: 'half', dots: 0 } } as any,
+          { type: 'note', id: 'n2', pitch: { step: 'E', octave: 3 }, duration: { divisions: 2, noteType: 'half', dots: 0 }, voice: 2, staff: 1 } as NoteElement,
+        ],
+        directions: [],
+      };
+      // 2 - 2 + 2 = 2
+      expect(getUsedDivisions(m)).toBe(2);
+    });
+  });
+
+  describe('mergeAdjacentRests: complex scenarios', () => {
+    it('should merge three consecutive eighth rests into dotted quarter', () => {
+      const elements = [
+        { type: 'rest' as const, id: 'r1', duration: { divisions: 0.5, noteType: 'eighth' as const, dots: 0 }, voice: 1, staff: 1 },
+        { type: 'rest' as const, id: 'r2', duration: { divisions: 0.5, noteType: 'eighth' as const, dots: 0 }, voice: 1, staff: 1 },
+        { type: 'rest' as const, id: 'r3', duration: { divisions: 0.5, noteType: 'eighth' as const, dots: 0 }, voice: 1, staff: 1 },
+      ];
+      const merged = mergeAdjacentRests(elements, 1);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].duration.divisions).toBe(1.5);
+      expect(merged[0].duration.noteType).toBe('quarter');
+      expect(merged[0].duration.dots).toBe(1);
+    });
+
+    it('should not merge rests of different voices', () => {
+      const elements = [
+        { type: 'rest' as const, id: 'r1', duration: { divisions: 1, noteType: 'quarter' as const, dots: 0 }, voice: 1, staff: 1 },
+        { type: 'rest' as const, id: 'r2', duration: { divisions: 1, noteType: 'quarter' as const, dots: 0 }, voice: 2, staff: 1 },
+      ];
+      const merged = mergeAdjacentRests(elements, 1);
+      expect(merged).toHaveLength(2);
+    });
+
+    it('should handle single element (no merge needed)', () => {
+      const elements = [
+        { type: 'note' as const, id: 'n1', pitch: { step: 'C' as const, octave: 4 }, duration: { divisions: 4, noteType: 'whole' as const, dots: 0 }, voice: 1, staff: 1 },
+      ];
+      const merged = mergeAdjacentRests(elements, 1);
+      expect(merged).toHaveLength(1);
+    });
+
+    it('should handle empty elements array', () => {
+      const merged = mergeAdjacentRests([], 1);
+      expect(merged).toHaveLength(0);
+    });
+  });
 });

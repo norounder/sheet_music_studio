@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import type { ScoreData, NoteElement, Pitch, KeySignature } from '../types';
+import type { ScoreData, NoteElement, RestElement, Pitch, KeySignature } from '../types';
 import {
   pitchToAbsoluteSemitone,
   absoluteSemitoneToPitch,
   transposePitch,
   transposeKeySignature,
   transposeScoreData,
+  detectKey,
+  getTargetKey,
 } from './transposer';
 
 describe('transposer', () => {
@@ -236,6 +238,180 @@ describe('transposer', () => {
       const n1 = result.parts[0].measures[0].elements[0] as NoteElement;
       expect(n1.pitch.step).toBe('C');
       expect(n1.pitch.octave).toBe(5); // one octave up
+    });
+
+    it('round-trip: all 12 semitone offsets preserve absolute pitch', () => {
+      const sd = makeTestScore();
+      for (let semi = -11; semi <= 11; semi++) {
+        if (semi === 0) continue;
+        const up = transposeScoreData(sd, semi);
+        const rt = transposeScoreData(up, -semi);
+
+        const origNotes = sd.parts[0].measures[0].elements
+          .filter((e) => e.type === 'note') as NoteElement[];
+        const rtNotes = rt.parts[0].measures[0].elements
+          .filter((e) => e.type === 'note') as NoteElement[];
+
+        for (let i = 0; i < origNotes.length; i++) {
+          expect(
+            pitchToAbsoluteSemitone(rtNotes[i].pitch),
+            `semitones=${semi}, note index=${i}`,
+          ).toBe(pitchToAbsoluteSemitone(origNotes[i].pitch));
+        }
+      }
+    });
+
+    it('round-trip: key signature restored for all 12 offsets', () => {
+      const sd = makeTestScore();
+      for (let semi = -11; semi <= 11; semi++) {
+        if (semi === 0) continue;
+        const up = transposeScoreData(sd, semi);
+        const rt = transposeScoreData(up, -semi);
+
+        const origKey = sd.parts[0].measures[0].attributes?.keySignature;
+        const rtKey = rt.parts[0].measures[0].attributes?.keySignature;
+        expect(rtKey?.fifths, `semitones=${semi}`).toBe(origKey?.fifths);
+      }
+    });
+
+    it('partial range round-trip: untouched measures remain identical', () => {
+      const sd = makeTestScore();
+      const up = transposeScoreData(sd, 3, 1, 1); // only measure 1
+      const rt = transposeScoreData(up, -3, 1, 1);
+
+      // Measure 2 should never have changed
+      const origM2 = sd.parts[0].measures[1].elements[0] as NoteElement;
+      const upM2 = up.parts[0].measures[1].elements[0] as NoteElement;
+      const rtM2 = rt.parts[0].measures[1].elements[0] as NoteElement;
+
+      expect(upM2.pitch.step).toBe(origM2.pitch.step);
+      expect(rtM2.pitch.step).toBe(origM2.pitch.step);
+    });
+
+    it('should preserve element count and rest types through transpose', () => {
+      const sd = makeTestScore();
+      const result = transposeScoreData(sd, 7);
+
+      const m2els = result.parts[0].measures[1].elements;
+      expect(m2els).toHaveLength(2);
+      expect(m2els[1].type).toBe('rest');
+      expect(m2els[1].duration.noteType).toBe('quarter');
+    });
+
+    it('multi-part: transpose affects all parts', () => {
+      const multiPart: ScoreData = {
+        parts: [
+          {
+            id: 'P1', name: 'Violin', staves: 1,
+            measures: [{
+              number: 1,
+              attributes: { divisions: 1, keySignature: { fifths: 0, mode: 'major' as const } },
+              elements: [
+                { type: 'note', id: 'v1', pitch: { step: 'C', octave: 5 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [],
+            }],
+          },
+          {
+            id: 'P2', name: 'Cello', staves: 1,
+            measures: [{
+              number: 1,
+              attributes: { divisions: 1, keySignature: { fifths: 0, mode: 'major' as const } },
+              elements: [
+                { type: 'note', id: 'c1', pitch: { step: 'C', octave: 3 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [],
+            }],
+          },
+        ],
+      };
+
+      const result = transposeScoreData(multiPart, 2);
+      expect((result.parts[0].measures[0].elements[0] as NoteElement).pitch.step).toBe('D');
+      expect((result.parts[1].measures[0].elements[0] as NoteElement).pitch.step).toBe('D');
+      expect(result.parts[0].measures[0].attributes?.keySignature?.fifths).toBe(2);
+      expect(result.parts[1].measures[0].attributes?.keySignature?.fifths).toBe(2);
+    });
+  });
+
+  describe('detectKey', () => {
+    it('should detect explicit key signature from first measure', () => {
+      const sd: ScoreData = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [{
+            number: 1,
+            attributes: { divisions: 1, keySignature: { fifths: 2, mode: 'major' } },
+            elements: [],
+            directions: [],
+          }],
+        }],
+      };
+      const key = detectKey(sd);
+      expect(key.fifths).toBe(2);
+      expect(key.mode).toBe('major');
+    });
+
+    it('should infer C major from C major scale notes when no key signature', () => {
+      const sd: ScoreData = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [{
+            number: 1,
+            elements: [
+              { type: 'note', id: 'n1', pitch: { step: 'C', octave: 4 }, duration: { divisions: 4, noteType: 'whole', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              { type: 'note', id: 'n2', pitch: { step: 'E', octave: 4 }, duration: { divisions: 4, noteType: 'whole', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              { type: 'note', id: 'n3', pitch: { step: 'G', octave: 4 }, duration: { divisions: 4, noteType: 'whole', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+            ],
+            directions: [],
+          }],
+        }],
+      };
+      const key = detectKey(sd);
+      expect(key.fifths).toBe(0); // C major
+    });
+
+    it('should return C major for empty score (no notes)', () => {
+      const sd: ScoreData = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [{ number: 1, elements: [], directions: [] }],
+        }],
+      };
+      const key = detectKey(sd);
+      expect(key.fifths).toBe(0);
+    });
+  });
+
+  describe('getTargetKey', () => {
+    it('should calculate target key from source + semitones', () => {
+      const result = getTargetKey({ fifths: 0, mode: 'major' }, 2);
+      expect(result.fifths).toBe(2); // D major
+      expect(result.mode).toBe('major');
+    });
+
+    it('should handle negative semitones', () => {
+      const result = getTargetKey({ fifths: 0, mode: 'major' }, -1);
+      // C major -1 semitone = B major (5 sharps), enharmonic to Cb major (-7 flats)
+      // transposeKeySignature normalizes to [-7, 7], preferring sharps
+      expect(result.fifths).toBe(5);
+      expect(result.fifths).toBeGreaterThanOrEqual(-7);
+      expect(result.fifths).toBeLessThanOrEqual(7);
+    });
+
+    it('should preserve mode', () => {
+      const result = getTargetKey({ fifths: 0, mode: 'minor' }, 5);
+      expect(result.mode).toBe('minor');
+    });
+
+    it('round-trip: getTargetKey(source, N) then getTargetKey(result, -N) = source', () => {
+      for (let semi = -11; semi <= 11; semi++) {
+        if (semi === 0) continue;
+        const source: KeySignature = { fifths: 0, mode: 'major' };
+        const target = getTargetKey(source, semi);
+        const roundTrip = getTargetKey(target, -semi);
+        expect(roundTrip.fifths, `semitones=${semi}`).toBe(source.fifths);
+      }
     });
   });
 });
