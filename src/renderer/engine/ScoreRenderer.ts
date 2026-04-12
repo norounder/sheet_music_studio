@@ -93,10 +93,12 @@ export interface RenderConfig {
   staveSpacing: number;
   /** 시스템 간 수직 간격 (줄 바꿈) */
   systemSpacing: number;
-  /** 한 줄에 표시할 마디 수 */
+  /** 한 줄에 표시할 마디 수 (0 or undefined = 자동 계산) */
   measuresPerLine: number;
   /** 마디 번호 표시 여부 */
   showMeasureNumbers: boolean;
+  /** 렌더링 가용 너비 (자동 줄바꿈 계산용) */
+  containerWidth?: number;
 }
 
 const DEFAULT_CONFIG: RenderConfig = {
@@ -109,6 +111,68 @@ const DEFAULT_CONFIG: RenderConfig = {
   measuresPerLine: 4,
   showMeasureNumbers: true,
 };
+
+// ─── 마디 너비 계산 ───
+
+const MIN_MEASURE_WIDTH = 150;
+const NOTE_SPACING = 25;
+const BASE_MEASURE_WIDTH = 80;
+const CLEF_KEY_EXTRA = 80; // clef + key signature space for first-in-line
+
+/** Calculate dynamic width for a measure based on note density */
+function calculateMeasureWidth(measure: Measure, isFirstInLine: boolean): number {
+  // Count elements that take horizontal space
+  let noteCount = 0;
+  for (const el of measure.elements) {
+    if (el.type === 'note' || el.type === 'rest') noteCount++;
+  }
+  const contentWidth = BASE_MEASURE_WIDTH + noteCount * NOTE_SPACING;
+  const extra = isFirstInLine ? CLEF_KEY_EXTRA : 0;
+  return Math.max(MIN_MEASURE_WIDTH, contentWidth) + extra;
+}
+
+/** Layout measures into lines based on available width */
+function layoutMeasuresIntoLines(
+  measures: Measure[],
+  availableWidth: number,
+): { startIdx: number; endIdx: number; widths: number[] }[] {
+  const lines: { startIdx: number; endIdx: number; widths: number[] }[] = [];
+  let lineStart = 0;
+  let lineWidth = 0;
+  let lineWidths: number[] = [];
+
+  for (let i = 0; i < measures.length; i++) {
+    const isFirstInLine = i === lineStart;
+    const w = calculateMeasureWidth(measures[i], isFirstInLine);
+
+    if (lineWidth + w > availableWidth && lineWidths.length > 0) {
+      // Stretch widths to fill available width
+      const scale = availableWidth / lineWidth;
+      lines.push({
+        startIdx: lineStart,
+        endIdx: i,
+        widths: lineWidths.map(lw => lw * scale),
+      });
+      lineStart = i;
+      lineWidth = 0;
+      lineWidths = [];
+      // Recalculate as first in new line
+      const wFirst = calculateMeasureWidth(measures[i], true);
+      lineWidth = wFirst;
+      lineWidths.push(wFirst);
+    } else {
+      lineWidth += w;
+      lineWidths.push(w);
+    }
+  }
+
+  // Last line — don't stretch, keep natural widths
+  if (lineWidths.length > 0) {
+    lines.push({ startIdx: lineStart, endIdx: measures.length, widths: lineWidths });
+  }
+
+  return lines;
+}
 
 // ─── 내부 타입 ───
 
@@ -139,6 +203,7 @@ export class ScoreRenderer {
   private context: RenderContext | null = null;
   private renderedNotes: RenderedNote[] = [];
   private systemHeight: number = 0;
+  private measureLayout: { startIdx: number; endIdx: number; widths: number[] }[] = [];
   /** Staves indexed by [lineIndex][partIndex] = first stave of that part on that line */
   private systemStaves: Map<number, Map<number, { first: Stave; last: Stave }>> = new Map();
 
@@ -153,8 +218,20 @@ export class ScoreRenderer {
    */
   render(scoreData: ScoreData): void {
     this.clear();
-    this.initRenderer(scoreData);
 
+    // Pre-calculate measure layout BEFORE initRenderer (height/width depend on it)
+    const maxMeasuresPart = scoreData.parts.reduce(
+      (max, p) => (p.measures.length > max.measures.length ? p : max),
+      scoreData.parts[0],
+    );
+    const availableWidth = this.config.containerWidth
+      ?? (this.config.staveStartX + this.config.staveWidth * this.config.measuresPerLine + 100);
+    this.measureLayout = layoutMeasuresIntoLines(
+      maxMeasuresPart.measures,
+      availableWidth - this.config.staveStartX - 20,
+    );
+
+    this.initRenderer(scoreData);
     if (!this.context) return;
 
     // Calculate system height (all parts stacked per system line)
@@ -224,28 +301,28 @@ export class ScoreRenderer {
   }
 
   private estimateHeight(scoreData: ScoreData): number {
-    const { measuresPerLine, staveSpacing, systemSpacing, staveStartY } = this.config;
+    const { staveSpacing, systemSpacing, staveStartY } = this.config;
     const partSpacing = 40;
 
-    // Total staves across all parts
     let totalStaves = 0;
-    let maxMeasures = 0;
     for (const part of scoreData.parts) {
       totalStaves += part.staves || 1;
-      maxMeasures = Math.max(maxMeasures, part.measures.length);
     }
     const totalPartSpacing = Math.max(0, scoreData.parts.length - 1) * partSpacing;
-
-    // Height per system line = all parts' staves + spacing between parts
     const systemHeight = totalStaves * staveSpacing + totalPartSpacing + systemSpacing;
-    const numLines = Math.ceil(maxMeasures / measuresPerLine);
+    const numLines = this.measureLayout.length || 1;
     return staveStartY + numLines * systemHeight + 100;
   }
 
   private estimateTotalWidth(): number {
-    const { staveStartX, staveWidth, measuresPerLine } = this.config;
-    // 첫 마디 extra + 나머지 마디
-    return staveStartX + (staveWidth + 60) + (measuresPerLine - 1) * staveWidth + 40;
+    const { staveStartX } = this.config;
+    // Find the widest line
+    let maxWidth = 800;
+    for (const line of this.measureLayout) {
+      const lineWidth = line.widths.reduce((sum, w) => sum + w, 0);
+      maxWidth = Math.max(maxWidth, lineWidth);
+    }
+    return staveStartX + maxWidth + 40;
   }
 
   // ─── Part 렌더링 ───
@@ -292,17 +369,29 @@ export class ScoreRenderer {
         }
       }
 
-      const lineIndex = Math.floor(mIdx / measuresPerLine);
-      const posInLine = mIdx % measuresPerLine;
+      // Dynamic layout: find which line this measure belongs to
+      let lineIndex = 0;
+      let posInLine = 0;
+      let thisWidth = staveWidth;
+
+      for (let li = 0; li < this.measureLayout.length; li++) {
+        const line = this.measureLayout[li];
+        if (mIdx >= line.startIdx && mIdx < line.endIdx) {
+          lineIndex = li;
+          posInLine = mIdx - line.startIdx;
+          thisWidth = line.widths[posInLine] ?? staveWidth;
+          break;
+        }
+      }
       const isFirstInLine = posInLine === 0;
 
-      // 첫 마디는 음자리표/박자표 공간만큼 더 넓게
-      const thisWidth = isFirstInLine ? staveWidth + firstMeasureExtra : staveWidth;
-
-      // X 좌표 계산: 첫 마디 이후는 extra 만큼 밀림
+      // X 좌표: 같은 줄의 이전 마디 너비를 누적
       let x = staveStartX;
-      if (posInLine > 0) {
-        x = staveStartX + (staveWidth + firstMeasureExtra) + (posInLine - 1) * staveWidth;
+      const currentLine = this.measureLayout[lineIndex];
+      if (currentLine) {
+        for (let i = 0; i < posInLine; i++) {
+          x += currentLine.widths[i] ?? staveWidth;
+        }
       }
 
       const baseY = staveStartY + partYOffset + lineIndex * (this.systemHeight + systemSpacing);
@@ -313,6 +402,12 @@ export class ScoreRenderer {
         const y = baseY + (staffNum - 1) * staveSpacing;
         const stave = this.createStave(x, y, thisWidth, measure, staffNum, isFirstInLine, part, currentKeyFifths);
         stave.setContext(this.context).draw();
+        // 마디 선택용 data 속성 부착
+        const staveSvg = stave.getSVGElement();
+        if (staveSvg) {
+          staveSvg.setAttribute('data-measure-index', String(mIdx));
+          staveSvg.style.cursor = 'pointer';
+        }
         staves.push(stave);
       }
 
@@ -463,8 +558,8 @@ export class ScoreRenderer {
       stave.addKeySignature(mapKeySignatureToVexKey(ks));
     }
 
-    // 박자표는 첫 마디 또는 변경 시에만 표시
-    if (measure.attributes?.timeSignature && (measure.number === 1 || isFirstInLine)) {
+    // 박자표: 변경 시 표시 (첫 마디에 항상 있고, 줄 시작에서는 clef/key만으로 충분)
+    if (measure.attributes?.timeSignature) {
       stave.addTimeSignature(mapTimeSignatureToVexTime(measure.attributes.timeSignature));
     }
 

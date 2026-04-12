@@ -75,14 +75,10 @@ const ScoreEditor: React.FC<ScoreEditorProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // staveWidth 기반으로 한 줄에 들어갈 마디 수 자동 계산
+  // containerWidth를 전달하여 동적 마디 너비 + 자동 줄바꿈을 사용
   const autoConfig = useMemo(() => {
-    const staveWidth = renderConfig?.staveWidth ?? 350;
-    const firstMeasureExtra = 60;
-    const availableWidth = containerWidth / zoom;
-    // 첫 마디는 extra 포함, 나머지는 staveWidth
-    const measuresPerLine = Math.max(1, Math.floor((availableWidth - firstMeasureExtra) / staveWidth));
-    return { ...renderConfig, measuresPerLine };
+    const effectiveWidth = containerWidth / zoom;
+    return { ...renderConfig, containerWidth: effectiveWidth };
   }, [renderConfig, containerWidth, zoom]);
 
   const handleWheel = useCallback(
@@ -234,6 +230,29 @@ const ScoreEditor: React.FC<ScoreEditorProps> = ({
             }
           }
         }
+
+        // 음표가 아니면 마디(Stave) 클릭 확인
+        const staveGroup = target.closest('[data-measure-index]') as HTMLElement | null;
+        if (staveGroup) {
+          const mIdx = parseInt(staveGroup.getAttribute('data-measure-index') ?? '', 10);
+          if (!isNaN(mIdx) && scoreData.parts[0]?.measures[mIdx]) {
+            const measure = scoreData.parts[0].measures[mIdx];
+            const attrs = measure.attributes;
+            onSelectionChange({
+              type: 'measure',
+              measureIndex: mIdx,
+              measureAttributes: {
+                keyFifths: attrs?.keySignature?.fifths,
+                timeBeats: attrs?.timeSignature?.beats,
+                timeBeatType: attrs?.timeSignature?.beatType,
+                clefSign: attrs?.clef?.[0]?.sign,
+              },
+            });
+            setDrag(null);
+            return;
+          }
+        }
+
         onSelectionChange(null);
       }
 
