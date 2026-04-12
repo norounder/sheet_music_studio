@@ -1,0 +1,186 @@
+/**
+ * ReviewPanel component
+ *
+ * Side panel for reviewing low-confidence OMR recognition results.
+ * Shows each flagged item with confidence, type, and measure location.
+ */
+
+import React, { useMemo } from 'react';
+import type { ReviewState, ReviewItem } from '../../shared/types/review';
+
+export interface ReviewPanelProps {
+  reviewState: ReviewState;
+  onAccept: (itemId: string) => void;
+  onSkip: (itemId: string) => void;
+  onClose: () => void;
+}
+
+/** Confidence level thresholds for color coding */
+function getConfidenceColor(confidence: number): string {
+  if (confidence < 0.4) return '#f38ba8';  // red
+  if (confidence < 0.6) return '#fab387';  // peach
+  return '#f9e2af';                         // yellow
+}
+
+/** Friendly symbol type labels */
+const SYMBOL_LABELS: Record<string, string> = {
+  note: 'Note',
+  rest: 'Rest',
+  clef: 'Clef',
+  'key-signature': 'Key Sig.',
+  'time-signature': 'Time Sig.',
+  'grace-note': 'Grace Note',
+  dynamic: 'Dynamic',
+  articulation: 'Articulation',
+  ornament: 'Ornament',
+  beam: 'Beam',
+  tie: 'Tie',
+  slur: 'Slur',
+  barline: 'Barline',
+  repeat: 'Repeat',
+  ending: 'Ending',
+  pedal: 'Pedal',
+  fingering: 'Fingering',
+  lyric: 'Lyric',
+  unknown: 'Unknown',
+};
+
+const ReviewPanel: React.FC<ReviewPanelProps> = ({
+  reviewState,
+  onAccept,
+  onSkip,
+  onClose,
+}) => {
+  const pendingItems = useMemo(
+    () => reviewState.items.filter((item) => item.status === 'pending'),
+    [reviewState.items],
+  );
+
+  const completedCount = reviewState.items.length - pendingItems.length;
+  const currentItem: ReviewItem | undefined = pendingItems[0];
+
+  // All items reviewed
+  if (!currentItem) {
+    return (
+      <div className="review-panel">
+        <div className="review-panel-header">
+          <h3 style={{ margin: 0, fontSize: 14, color: '#cdd6f4' }}>Review Complete</h3>
+          <button className="review-panel-close" onClick={onClose} title="Close">
+            &times;
+          </button>
+        </div>
+        <div style={{ padding: 16, textAlign: 'center', color: '#a6adc8' }}>
+          <p>All {reviewState.items.length} items have been reviewed.</p>
+          <button className="dialog-btn primary" onClick={onClose} style={{ marginTop: 12 }}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const conf = currentItem.symbolConfidence;
+  const confPercent = Math.round(conf.confidence * 100);
+  const confColor = getConfidenceColor(conf.confidence);
+
+  return (
+    <div className="review-panel">
+      <div className="review-panel-header">
+        <h3 style={{ margin: 0, fontSize: 14, color: '#cdd6f4' }}>OMR Review</h3>
+        <button className="review-panel-close" onClick={onClose} title="Close">
+          &times;
+        </button>
+      </div>
+
+      {/* Progress */}
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid #313244' }}>
+        <span style={{ color: '#a6adc8', fontSize: 12 }}>
+          {completedCount} / {reviewState.items.length} reviewed
+        </span>
+        <div
+          style={{
+            width: '100%',
+            height: 3,
+            backgroundColor: '#313244',
+            borderRadius: 2,
+            marginTop: 4,
+          }}
+        >
+          <div
+            style={{
+              width: `${(completedCount / reviewState.items.length) * 100}%`,
+              height: '100%',
+              backgroundColor: '#a6e3a1',
+              borderRadius: 2,
+              transition: 'width 0.3s ease',
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Current item */}
+      <div style={{ padding: 16 }}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#cdd6f4', fontSize: 13, fontWeight: 600 }}>
+              {SYMBOL_LABELS[conf.type] ?? conf.type}
+            </span>
+            <span style={{ color: confColor, fontSize: 13, fontWeight: 600 }}>
+              {confPercent}%
+            </span>
+          </div>
+          <div style={{ color: '#a6adc8', fontSize: 12, marginTop: 4 }}>
+            Measure {currentItem.measureIndex + 1}
+          </div>
+        </div>
+
+        {/* Confidence bar */}
+        <div
+          style={{
+            width: '100%',
+            height: 4,
+            backgroundColor: '#313244',
+            borderRadius: 2,
+            marginBottom: 16,
+          }}
+        >
+          <div
+            style={{
+              width: `${confPercent}%`,
+              height: '100%',
+              backgroundColor: confColor,
+              borderRadius: 2,
+            }}
+          />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="dialog-btn primary"
+            style={{ flex: 1 }}
+            onClick={() => onAccept(currentItem.id)}
+          >
+            Accept
+          </button>
+          <button
+            className="dialog-btn"
+            style={{ flex: 1 }}
+            onClick={() => onSkip(currentItem.id)}
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+
+      {/* Remaining items summary */}
+      <div style={{ padding: '8px 16px', borderTop: '1px solid #313244' }}>
+        <span style={{ color: '#585b70', fontSize: 11 }}>
+          {pendingItems.length} item{pendingItems.length !== 1 ? 's' : ''} remaining
+        </span>
+      </div>
+    </div>
+  );
+};
+
+export default ReviewPanel;

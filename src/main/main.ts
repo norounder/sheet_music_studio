@@ -1,6 +1,9 @@
 import { app, BrowserWindow } from 'electron';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { registerFileHandlers } from './ipc/fileHandlers';
+import { registerOMRHandlers } from './ipc/omrHandlers';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -35,6 +38,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   registerFileHandlers();
+  registerOMRHandlers();
   createWindow();
 
   app.on('activate', () => {
@@ -47,5 +51,20 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+// Cleanup orphaned OMR temp directories on quit
+app.on('will-quit', async () => {
+  try {
+    const tmpBase = os.tmpdir();
+    const entries = await fs.promises.readdir(tmpBase);
+    for (const entry of entries) {
+      if (entry.startsWith('sms-omr-')) {
+        await fs.promises.rm(path.join(tmpBase, entry), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch {
+    // Best-effort cleanup
   }
 });

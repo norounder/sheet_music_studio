@@ -23,6 +23,8 @@ export interface ToolbarProps {
   onExportPdf?: () => void;
   /** PNG 내보내기 콜백 */
   onExportPng?: () => void;
+  /** OMR 가져오기 콜백 */
+  onOMRImport?: () => void;
   /** Undo 콜백 */
   onUndo?: () => void;
   /** Redo 콜백 */
@@ -64,6 +66,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onSave,
   onExportPdf,
   onExportPng,
+  onOMRImport,
   onUndo,
   onRedo,
   onTranspose,
@@ -107,6 +110,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <button className="toolbar-btn" onClick={onExportPng} title="Export as PNG">
           <span className="icon">🖼️</span>
           <span>PNG</span>
+        </button>
+        <button className="toolbar-btn" onClick={onOMRImport} title="Import via OMR">
+          <span className="icon">🔍</span>
+          <span>OMR</span>
         </button>
       </div>
 

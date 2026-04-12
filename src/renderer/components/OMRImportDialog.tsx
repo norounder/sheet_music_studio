@@ -1,0 +1,161 @@
+/**
+ * OMRImportDialog component
+ *
+ * Shows OMR processing progress after the user selects an image/PDF.
+ * Displays stage, page progress, and percent bar with cancel support.
+ */
+
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { OMR_CHANNELS } from '../../shared/ipc/channels';
+import type { OMRProgress } from '../../shared/types/progress';
+import type { ScoreDocument } from '../../shared/types/document';
+import type { OMRRecognizeResponse } from '../../shared/ipc/payloads';
+
+export interface OMRImportDialogProps {
+  onComplete: (document: ScoreDocument, processingTimeMs: number) => void;
+  onCancel: () => void;
+  onError: (message: string) => void;
+}
+
+type DialogState = 'processing' | 'error';
+
+const STAGE_LABELS: Record<OMRProgress['stage'], string> = {
+  preprocessing: 'Preprocessing',
+  inference: 'Recognizing',
+  postprocessing: 'Finalizing',
+};
+
+const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
+  onComplete,
+  onCancel,
+  onError,
+}) => {
+  const [state, setState] = useState<DialogState>('processing');
+  const [progress, setProgress] = useState<OMRProgress>({
+    stage: 'preprocessing',
+    currentPage: 0,
+    totalPages: 1,
+    percent: 0,
+  });
+  const [errorMessage, setErrorMessage] = useState('');
+  const invokedRef = useRef(false);
+
+  // Subscribe to progress events
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.on(
+      OMR_CHANNELS.PROGRESS,
+      (data: unknown) => {
+        setProgress(data as OMRProgress);
+      },
+    );
+    return unsubscribe;
+  }, []);
+
+  // Invoke OMR recognition once on mount
+  const runOMR = useCallback(async () => {
+    if (invokedRef.current) return;
+    invokedRef.current = true;
+
+    try {
+      const response = await window.electronAPI.invoke<OMRRecognizeResponse | null>(
+        OMR_CHANNELS.RECOGNIZE,
+      );
+
+      if (!response.success) {
+        setState('error');
+        setErrorMessage(response.error.message);
+        onError(response.error.message);
+        return;
+      }
+
+      // User cancelled the file dialog
+      if (response.data === null) {
+        onCancel();
+        return;
+      }
+
+      onComplete(response.data.document, response.data.processingTimeMs);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setState('error');
+      setErrorMessage(message);
+      onError(message);
+    }
+  }, [onComplete, onCancel, onError]);
+
+  useEffect(() => {
+    runOMR();
+  }, [runOMR]);
+
+  if (state === 'error') {
+    return (
+      <div className="dialog-overlay" onClick={onCancel}>
+        <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
+          <h3 className="dialog-title">OMR Error</h3>
+          <p style={{ color: '#f38ba8', margin: '12px 0' }}>{errorMessage}</p>
+          <div className="dialog-actions">
+            <button className="dialog-btn" onClick={onCancel}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dialog-overlay">
+      <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
+        <h3 className="dialog-title">Recognizing Sheet Music...</h3>
+
+        <div style={{ margin: '16px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ color: '#cdd6f4', fontSize: 13 }}>
+              {STAGE_LABELS[progress.stage]}
+            </span>
+            <span style={{ color: '#a6adc8', fontSize: 13 }}>
+              {progress.totalPages > 1
+                ? `Page ${progress.currentPage} / ${progress.totalPages}`
+                : ''}
+            </span>
+          </div>
+
+          {/* Progress bar */}
+          <div
+            style={{
+              width: '100%',
+              height: 6,
+              backgroundColor: '#313244',
+              borderRadius: 3,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${progress.percent}%`,
+                height: '100%',
+                backgroundColor: '#89b4fa',
+                borderRadius: 3,
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
+
+          <div style={{ textAlign: 'right', marginTop: 4 }}>
+            <span style={{ color: '#a6adc8', fontSize: 12 }}>
+              {progress.percent}%
+            </span>
+          </div>
+        </div>
+
+        <div className="dialog-actions">
+          <button className="dialog-btn" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default OMRImportDialog;

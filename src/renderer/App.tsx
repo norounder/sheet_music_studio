@@ -34,10 +34,14 @@ import {
 } from '@shared/controller/commands';
 import { FILE_CHANNELS } from '@shared/ipc/channels';
 import type { IPCResponse } from '@shared/ipc/payloads';
+import type { ReviewState } from '@shared/types/review';
+import type { ScoreDocument } from '@shared/types/document';
 import Toolbar from './components/Toolbar';
 import ScoreEditor from './components/ScoreEditor';
 import PropertyPanel, { type SelectedElement } from './components/PropertyPanel';
 import TransposeDialog from './components/TransposeDialog';
+import OMRImportDialog from './components/OMRImportDialog';
+import ReviewPanel from './components/ReviewPanel';
 import { createTransposeCommand } from '@shared/controller/commands';
 import { PlaybackEngine, type PlaybackState, type PlaybackPosition } from './playback';
 import './styles/editor.css';
@@ -115,6 +119,8 @@ const App: React.FC = () => {
   const [canRedoState, setCanRedo] = useState(false);
   const [showMeasureNumbers, setShowMeasureNumbers] = useState(true);
   const [showTransposeDialog, setShowTransposeDialog] = useState(false);
+  const [omrDialogOpen, setOmrDialogOpen] = useState(false);
+  const [reviewState, setReviewState] = useState<ReviewState | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
   const [tempo, setTempo] = useState(120);
   const [playbackPosition, setPlaybackPosition] = useState<PlaybackPosition | null>(null);
@@ -192,8 +198,8 @@ const App: React.FC = () => {
         e.preventDefault();
         controllerRef.current.redo();
       }
-      // Delete key deletes selected note
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      // Delete key deletes selected note (Backspace 제외 — 텍스트 편집과 충돌 방지)
+      if (e.key === 'Delete') {
         const sel = selectedRef.current;
         const sd = controllerRef.current.getScoreData();
         if (sel?.element?.type === 'note' && sd) {
@@ -252,6 +258,8 @@ const App: React.FC = () => {
 
       if (!response.success) {
         alert(response.error?.message ?? '파일을 저장할 수 없습니다.');
+      } else if (response.data) {
+        console.log('Saved:', response.data.savedPath);
       }
     } catch (err) {
       console.error('File save error:', err);
@@ -275,6 +283,8 @@ const App: React.FC = () => {
 
       if (!response.success) {
         alert(response.error?.message ?? 'PDF 내보내기에 실패했습니다.');
+      } else if (response.data) {
+        console.log('Exported PDF:', response.data.exportedPath);
       }
     } catch (err) {
       console.error('PDF export error:', err);
@@ -298,6 +308,8 @@ const App: React.FC = () => {
 
       if (!response.success) {
         alert(response.error?.message ?? 'PNG 내보내기에 실패했습니다.');
+      } else if (response.data) {
+        console.log('Exported PNG:', response.data.exportedPath);
       }
     } catch (err) {
       console.error('PNG export error:', err);
@@ -317,6 +329,69 @@ const App: React.FC = () => {
     },
     [],
   );
+
+  // ─── OMR handlers ───
+  const handleOMRImport = useCallback(() => {
+    setOmrDialogOpen(true);
+  }, []);
+
+  const handleOMRComplete = useCallback(
+    (document: ScoreDocument, processingTimeMs: number) => {
+      setOmrDialogOpen(false);
+      controllerRef.current.setScoreData(document.scoreData);
+      setScoreData(document.scoreData);
+      setCanUndo(false);
+      setCanRedo(false);
+      setSelected(null);
+
+      if (document.reviewState && document.reviewState.items.length > 0) {
+        setReviewState(document.reviewState);
+      }
+
+      console.log(`OMR completed in ${(processingTimeMs / 1000).toFixed(1)}s`);
+    },
+    [],
+  );
+
+  const handleOMRCancel = useCallback(() => {
+    setOmrDialogOpen(false);
+  }, []);
+
+  const handleOMRError = useCallback((message: string) => {
+    console.error('OMR error:', message);
+  }, []);
+
+  const handleReviewAccept = useCallback(
+    (itemId: string) => {
+      if (!reviewState) return;
+      const updated: ReviewState = {
+        ...reviewState,
+        items: reviewState.items.map((item) =>
+          item.id === itemId ? { ...item, status: 'accepted' as const } : item,
+        ),
+      };
+      setReviewState(updated);
+    },
+    [reviewState],
+  );
+
+  const handleReviewSkip = useCallback(
+    (itemId: string) => {
+      if (!reviewState) return;
+      const updated: ReviewState = {
+        ...reviewState,
+        items: reviewState.items.map((item) =>
+          item.id === itemId ? { ...item, status: 'skipped' as const } : item,
+        ),
+      };
+      setReviewState(updated);
+    },
+    [reviewState],
+  );
+
+  const handleReviewClose = useCallback(() => {
+    setReviewState(null);
+  }, []);
 
   // Playback engine lifecycle
   useEffect(() => {
@@ -552,6 +627,7 @@ const App: React.FC = () => {
         onSave={handleSave}
         onExportPdf={handleExportPdf}
         onExportPng={handleExportPng}
+        onOMRImport={handleOMRImport}
         canUndo={canUndoState}
         canRedo={canRedoState}
         onUndo={handleUndo}
@@ -586,6 +662,21 @@ const App: React.FC = () => {
           totalMeasures={scoreData.parts[0]?.measures.length ?? 0}
           onTranspose={handleTranspose}
           onClose={() => setShowTransposeDialog(false)}
+        />
+      )}
+      {omrDialogOpen && (
+        <OMRImportDialog
+          onComplete={handleOMRComplete}
+          onCancel={handleOMRCancel}
+          onError={handleOMRError}
+        />
+      )}
+      {reviewState && (
+        <ReviewPanel
+          reviewState={reviewState}
+          onAccept={handleReviewAccept}
+          onSkip={handleReviewSkip}
+          onClose={handleReviewClose}
         />
       )}
     </div>

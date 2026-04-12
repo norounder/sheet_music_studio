@@ -34,7 +34,7 @@ function isSupportedExtension(filePath: string): boolean {
  * .mxl 파일(ZIP 압축된 MusicXML)에서 XML 콘텐츠를 추출한다.
  * META-INF/container.xml에서 rootfile을 찾거나, .xml 파일을 직접 탐색한다.
  */
-async function extractMxl(filePath: string): Promise<string> {
+export async function extractMxl(filePath: string): Promise<string> {
   const buffer = await fs.promises.readFile(filePath);
   const zip = await JSZip.loadAsync(buffer);
 
@@ -81,6 +81,36 @@ interface FileExportIPCRequest {
 /** file:export 응답 데이터 */
 interface FileExportIPCResponse {
   exportedPath: string;
+}
+
+/** 최소 여유 공간 (10 MB) — 이보다 작으면 DISK_SPACE_INSUFFICIENT */
+const MIN_FREE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 저장 대상 드라이브의 여유 공간이 충분한지 확인한다.
+ * 부족하면 IPCResponse 에러를 반환, 충분하면 null을 반환한다.
+ */
+async function checkDiskSpace(
+  filePath: string,
+  requiredBytes: number,
+): Promise<IPCResponse<null> | null> {
+  try {
+    const dir = path.dirname(filePath);
+    const stats = await fs.promises.statfs(dir);
+    const freeBytes = stats.bfree * stats.bsize;
+    if (freeBytes < requiredBytes + MIN_FREE_BYTES) {
+      return {
+        success: false,
+        error: createIPCError(
+          'DISK_SPACE_INSUFFICIENT',
+          `저장 공간이 부족합니다. 필요: ${Math.ceil(requiredBytes / 1024)} KB, 남은 공간: ${Math.ceil(freeBytes / 1024)} KB`,
+        ),
+      };
+    }
+  } catch {
+    // statfs를 지원하지 않는 환경에서는 검사를 건너뛴다
+  }
+  return null;
 }
 
 /**
@@ -165,6 +195,10 @@ export function registerFileHandlers(): void {
       }
 
       try {
+        const contentBytes = Buffer.byteLength(req.xmlContent, 'utf-8');
+        const spaceErr = await checkDiskSpace(result.filePath, contentBytes);
+        if (spaceErr) return spaceErr as IPCResponse<FileSaveIPCResponse | null>;
+
         await fs.promises.writeFile(result.filePath, req.xmlContent, 'utf-8');
         return {
           success: true,
@@ -205,6 +239,9 @@ export function registerFileHandlers(): void {
 
       try {
         const buffer = Buffer.from(req.binaryData);
+        const spaceErr = await checkDiskSpace(result.filePath, buffer.length);
+        if (spaceErr) return spaceErr as IPCResponse<FileExportIPCResponse | null>;
+
         await fs.promises.writeFile(result.filePath, buffer);
         return {
           success: true,
