@@ -6,13 +6,20 @@
  */
 
 import React, { useState } from 'react';
-import type { NoteElement, RestElement, NoteType, PitchStep, Articulation } from '@shared/types';
+import type { NoteElement, RestElement, NoteType, PitchStep, Articulation, Lyric } from '@shared/types';
 
 export interface SelectedElement {
   type: 'note' | 'rest' | 'measure' | 'multi';
   element?: NoteElement | RestElement;
   elements?: (NoteElement | RestElement)[];
   measureIndex?: number;
+  /** 마디 속성 정보 (measure 선택 시) */
+  measureAttributes?: {
+    keyFifths?: number;
+    timeBeats?: number;
+    timeBeatType?: number;
+    clefSign?: string;
+  };
 }
 
 export interface PropertyPanelProps {
@@ -31,6 +38,20 @@ const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: 'eighth', label: '8th' },
   { value: '16th', label: '16th' },
   { value: '32nd', label: '32nd' },
+];
+
+const KEY_SIGNATURES: { value: number; label: string }[] = [
+  { value: -7, label: 'Cb' }, { value: -6, label: 'Gb' }, { value: -5, label: 'Db' },
+  { value: -4, label: 'Ab' }, { value: -3, label: 'Eb' }, { value: -2, label: 'Bb' },
+  { value: -1, label: 'F' }, { value: 0, label: 'C' }, { value: 1, label: 'G' },
+  { value: 2, label: 'D' }, { value: 3, label: 'A' }, { value: 4, label: 'E' },
+  { value: 5, label: 'B' }, { value: 6, label: 'F#' }, { value: 7, label: 'C#' },
+];
+
+const CLEF_OPTIONS: { value: string; label: string }[] = [
+  { value: 'G', label: 'Treble (G)' },
+  { value: 'F', label: 'Bass (F)' },
+  { value: 'C', label: 'Alto (C)' },
 ];
 
 const ARTICULATIONS: { value: Articulation; label: string }[] = [
@@ -89,15 +110,112 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
         {!selected ? (
           <div className="no-selection">No selection</div>
         ) : selected.type === 'measure' ? (
-          <div className="property-section">
-            <div className="property-section-title">Measure</div>
-            <div className="property-row">
-              <span className="property-label">Number</span>
-              <span className="property-value">
-                {selected.measureIndex !== undefined ? selected.measureIndex + 1 : '—'}
-              </span>
+          <>
+            <div className="property-section">
+              <div className="property-section-title">Measure</div>
+              <div className="property-row">
+                <span className="property-label">Number</span>
+                <span className="property-value">
+                  {selected.measureIndex !== undefined ? selected.measureIndex + 1 : '—'}
+                </span>
+              </div>
             </div>
-          </div>
+
+            {/* Key Signature */}
+            <div className="property-section">
+              <div className="property-section-title">Key Signature</div>
+              <div className="property-row">
+                <span className="property-label">Key</span>
+                <select
+                  className="property-select"
+                  value={selected.measureAttributes?.keyFifths ?? 0}
+                  onChange={(e) =>
+                    onPropertyChange?.('measure.keySignature', parseInt(e.target.value, 10))
+                  }
+                >
+                  {KEY_SIGNATURES.map((k) => (
+                    <option key={k.value} value={k.value}>{k.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Time Signature */}
+            <div className="property-section">
+              <div className="property-section-title">Time Signature</div>
+              <div className="property-row">
+                <span className="property-label">Beats</span>
+                <input
+                  className="property-input"
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={selected.measureAttributes?.timeBeats ?? 4}
+                  onChange={(e) =>
+                    onPropertyChange?.('measure.timeSignature', {
+                      beats: parseInt(e.target.value, 10),
+                      beatType: selected.measureAttributes?.timeBeatType ?? 4,
+                    })
+                  }
+                />
+              </div>
+              <div className="property-row">
+                <span className="property-label">Beat Type</span>
+                <select
+                  className="property-select"
+                  value={selected.measureAttributes?.timeBeatType ?? 4}
+                  onChange={(e) =>
+                    onPropertyChange?.('measure.timeSignature', {
+                      beats: selected.measureAttributes?.timeBeats ?? 4,
+                      beatType: parseInt(e.target.value, 10),
+                    })
+                  }
+                >
+                  <option value={2}>2</option>
+                  <option value={4}>4</option>
+                  <option value={8}>8</option>
+                  <option value={16}>16</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Clef */}
+            <div className="property-section">
+              <div className="property-section-title">Clef</div>
+              <div className="property-row">
+                <span className="property-label">Type</span>
+                <select
+                  className="property-select"
+                  value={selected.measureAttributes?.clefSign ?? 'G'}
+                  onChange={(e) =>
+                    onPropertyChange?.('measure.clef', e.target.value)
+                  }
+                >
+                  {CLEF_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Measure actions */}
+            <div className="property-section">
+              <div className="property-section-title">Actions</div>
+              <button
+                className="property-action-btn"
+                onClick={() => onPropertyChange?.('measure.addAfter', null)}
+              >
+                Add Measure After
+              </button>
+              <button
+                className="property-action-btn danger"
+                onClick={() => onPropertyChange?.('measure.delete', null)}
+                style={{ marginTop: 4 }}
+              >
+                Delete Measure
+              </button>
+            </div>
+          </>
         ) : noteElement ? (
           <>
             {/* Pitch section */}
@@ -230,6 +348,85 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
                   );
                 })}
               </div>
+            </div>
+
+            {/* Tie toggle */}
+            <div className="property-section">
+              <div className="property-section-title">Tie</div>
+              <div className="articulation-toggles">
+                <button
+                  className={`articulation-toggle ${noteElement.tie ? 'active' : ''}`}
+                  onClick={() => onPropertyChange?.('tie.toggle', null)}
+                  title={noteElement.tie ? 'Remove tie' : 'Add tie to next note'}
+                >
+                  {noteElement.tie ? 'Tied' : 'Add Tie'}
+                </button>
+              </div>
+            </div>
+
+            {/* Slur */}
+            <div className="property-section">
+              <div className="property-section-title">Slur</div>
+              {noteElement.slur && noteElement.slur.length > 0 ? (
+                <>
+                  {noteElement.slur.map((s) => (
+                    <div className="property-row" key={s.number}>
+                      <span className="property-label">
+                        Slur {s.number} ({s.type})
+                      </span>
+                      <button
+                        className="articulation-toggle"
+                        onClick={() => onPropertyChange?.('slur.delete', s.number)}
+                        title="Remove slur"
+                        style={{ fontSize: 10, padding: '1px 4px' }}
+                      >
+                        X
+                      </button>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <button
+                  className="articulation-toggle"
+                  onClick={() => onPropertyChange?.('slur.addStart', null)}
+                  title="Start slur from this note"
+                >
+                  Start Slur
+                </button>
+              )}
+            </div>
+
+            {/* Lyrics */}
+            <div className="property-section">
+              <div className="property-section-title">Lyrics</div>
+              {noteElement.lyrics?.map((l) => (
+                <div className="property-row" key={l.number}>
+                  <input
+                    className="property-input"
+                    style={{ width: 100, textAlign: 'left' }}
+                    value={l.text}
+                    onChange={(e) =>
+                      onPropertyChange?.('lyric.modify', { number: l.number, text: e.target.value })
+                    }
+                  />
+                  <button
+                    className="articulation-toggle"
+                    onClick={() => onPropertyChange?.('lyric.delete', l.number)}
+                    title="Remove lyric"
+                    style={{ fontSize: 10, padding: '1px 4px' }}
+                  >
+                    X
+                  </button>
+                </div>
+              ))}
+              <button
+                className="articulation-toggle"
+                onClick={() => onPropertyChange?.('lyric.add', null)}
+                title="Add lyric"
+                style={{ marginTop: 4 }}
+              >
+                + Add Lyric
+              </button>
             </div>
 
             {/* Delete note */}
