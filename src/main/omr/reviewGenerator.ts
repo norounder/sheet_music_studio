@@ -16,7 +16,7 @@
 import type { ScoreData, Part, Measure } from '../../shared/types/measure';
 import type { MeasureElement, NoteElement, Pitch } from '../../shared/types/elements';
 import type { Clef, KeySignature, TimeSignature } from '../../shared/types/attributes';
-import type { ReviewState, ReviewItem, SymbolConfidence, SymbolType } from '../../shared/types/review';
+import type { ReviewState, ReviewItem, SymbolConfidence, SymbolType, ReviewReason } from '../../shared/types/review';
 import type { MergeConflict } from './ensembleMerger';
 
 /** Default confidence for normal notes */
@@ -104,23 +104,31 @@ function calculateNoteConfidence(
   return confidence;
 }
 
+/** Rhythm mismatch detail for a voice */
+interface RhythmMismatchInfo {
+  voice: number;
+  expected: number;
+  actual: number;
+  excess: number;  // positive = too long, negative = too short
+}
+
 /**
- * Check if a measure's note durations add up to the expected total.
- * Returns true if there is a mismatch.
+ * Check measure duration per voice and return mismatch details.
+ * Returns empty array if all voices match.
  */
-function hasDurationMismatch(
+function getDurationMismatches(
   measure: Measure,
   timeSig: TimeSignature | undefined,
   divisions: number,
-): boolean {
+): RhythmMismatchInfo[] {
   const expected = expectedMeasureDivisions(timeSig, divisions);
-  if (expected === 0) return false;
+  if (expected === 0) return [];
 
   // Sum durations per voice, ignoring chords (they share time)
   const voiceDurations = new Map<number, number>();
   for (const el of measure.elements) {
     if (el.type === 'note') {
-      if (el.chord) continue; // chord notes share duration with previous
+      if (el.chord) continue;
       const voice = el.voice;
       voiceDurations.set(voice, (voiceDurations.get(voice) ?? 0) + el.duration.divisions);
     } else if (el.type === 'rest') {
@@ -130,17 +138,16 @@ function hasDurationMismatch(
       const voice = el.voice;
       voiceDurations.set(voice, (voiceDurations.get(voice) ?? 0) + el.duration.divisions);
     }
-    // backup handled implicitly by voice tracking
   }
 
-  // Check if any voice doesn't match expected
-  for (const [, total] of voiceDurations) {
+  const mismatches: RhythmMismatchInfo[] = [];
+  for (const [voice, total] of voiceDurations) {
     if (Math.abs(total - expected) > 1) {
-      return true;
+      mismatches.push({ voice, expected, actual: total, excess: total - expected });
     }
   }
 
-  return false;
+  return mismatches;
 }
 
 // ─── Extended Validation Rules ─────────────────────────────────
@@ -378,7 +385,8 @@ export function generateReviewState(
       }
 
       // Measure-level checks
-      const durationMismatch = hasDurationMismatch(measure, currentTimeSig, currentDivisions);
+      const rhythmMismatches = getDurationMismatches(measure, currentTimeSig, currentDivisions);
+      const hasDurationMismatch = rhythmMismatches.length > 0;
       const voiceCrossingPenalties = detectVoiceCrossing(measure);
       const lyricPenalties = checkLyricAlignment(measure);
       const repeatPenalty = repeatPenalties.get(mIdx) ?? 0;
@@ -394,10 +402,49 @@ export function generateReviewState(
         if (element.type !== 'note') continue;
 
         let confidence = calculateNoteConfidence(element, currentClef);
+        let reason: ReviewReason | undefined;
 
-        // Measure duration mismatch
-        if (durationMismatch) {
+        // Measure duration mismatch — primary reason
+        if (hasDurationMismatch) {
           confidence = Math.min(confidence, 0.4);
+          const mismatch = rhythmMismatches.find((m) => m.voice === element.voice) ?? rhythmMismatches[0];
+          reason = {
+            type: 'rhythm-mismatch',
+            expected: mismatch.expected,
+            actual: mismatch.actual,
+            voice: mismatch.voice,
+            excessDivisions: mismatch.excess,
+          };
+        }
+
+        // Grace note
+        if (!reason && element.graceNote) {
+          reason = { type: 'grace-note' };
+        }
+
+        // Short note
+        const shortTypes = ['32nd', '64th', '128th'];
+        if (!reason && shortTypes.includes(element.duration.noteType)) {
+          reason = { type: 'short-note', noteType: element.duration.noteType };
+        }
+
+        // Double accidental
+        if (!reason && element.pitch.alter !== undefined && Math.abs(element.pitch.alter) >= 2) {
+          reason = { type: 'double-accidental', alter: element.pitch.alter };
+        }
+
+        // Tuplet
+        if (!reason && element.duration.tuplet) {
+          reason = { type: 'tuplet' };
+        }
+
+        // Out-of-range pitch
+        if (!reason && currentClef) {
+          const midi = pitchToMidi(element.pitch.step, element.pitch.octave, element.pitch.alter);
+          const range = CLEF_RANGES[currentClef.sign];
+          if (range && (midi < range.low - 5 || midi > range.high + 5)) {
+            reason = { type: 'out-of-range', midi, clefRange: range };
+          }
         }
 
         // Key consistency check
@@ -406,22 +453,39 @@ export function generateReviewState(
         // Voice crossing penalty
         const voicePenalty = voiceCrossingPenalties.get(element.id) ?? 0;
         confidence += voicePenalty;
+        if (!reason && voicePenalty < 0) {
+          reason = { type: 'voice-crossing' };
+        }
 
         // Tie validity check
         const noteIdx = noteElements.indexOf(element);
         const nextNote = noteIdx >= 0 ? noteElements[noteIdx + 1] : undefined;
-        confidence += checkTieValidity(element, nextNote);
+        const tiePenalty = checkTieValidity(element, nextNote);
+        confidence += tiePenalty;
+        if (!reason && tiePenalty < -0.3) {
+          reason = { type: 'tie-invalid', description: nextNote ? `Tie connects ${element.pitch.step}${element.pitch.octave} to ${nextNote.pitch.step}${nextNote.pitch.octave}` : 'Tie starts with no following note' };
+        }
 
         // Lyric alignment penalty (hymn-specific)
         const lyricPenalty = lyricPenalties.get(element.id) ?? 0;
         confidence += lyricPenalty;
+        if (!reason && lyricPenalty < 0) {
+          reason = { type: 'lyric-gap' };
+        }
 
         // Repeat structure penalty
         confidence += repeatPenalty;
+        if (!reason && repeatPenalty < 0) {
+          reason = { type: 'repeat-unmatched' };
+        }
 
         // Ensemble conflict integration
         if (hasEnsembleConflict) {
           confidence = Math.min(confidence, 0.6);
+          if (!reason) {
+            const conflict = mergeConflicts.find((c) => c.partIndex === pIdx && c.measureIndex === mIdx);
+            reason = { type: 'ensemble-conflict', description: conflict?.description ?? 'Engine disagreement' };
+          }
         }
 
         // Ensemble agreement boost
@@ -447,6 +511,7 @@ export function generateReviewState(
             },
             measureIndex: mIdx,
             status: 'pending',
+            reason,
           });
         }
       }
