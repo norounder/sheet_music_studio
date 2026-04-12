@@ -91,11 +91,18 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
       const smtAvailable = modelManager ? areSMTModelsAvailable(modelManager) : false;
 
       if (!audiverisStatus.available && !smtAvailable) {
+        const details: string[] = [];
+        if (!audiverisStatus.available) {
+          details.push(`Audiveris: ${audiverisStatus.error ?? 'Java 17+ and Audiveris JAR not found'}`);
+        }
+        if (!smtAvailable) {
+          details.push('SMT++: ONNX model files not found in models/smt/ directory');
+        }
         return {
           success: false,
           error: createIPCError(
             'OMR_MODEL_LOAD_FAILED',
-            'No OMR engine available. Install Audiveris or download SMT++ models.',
+            `No OMR engine available.\n${details.join('\n')}`,
           ),
         };
       }

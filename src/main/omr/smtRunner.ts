@@ -2,10 +2,16 @@
  * SMT++ (Sheet Music Transformer) ONNX inference runner.
  * Loads SMT++ encoder and decoder models via onnxruntime-node,
  * performs autoregressive decoding, and returns bekern notation.
+ *
+ * Model: antoniorv6/smt-grandstaff (HuggingFace)
+ * Architecture: ConvNext encoder (1ch grayscale) + Transformer decoder (8L/4H/256D)
+ * Output: bekern (Humdrum **kern variant) notation
  */
 
 import * as ort from 'onnxruntime-node';
 import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
 import type { ModelManager } from './modelManager';
 import type { OMRProgress } from '../../shared/types/progress';
 import type { ScoreData } from '../../shared/types/measure';
@@ -21,6 +27,8 @@ export const SMT_MODEL_NAMES = {
 export const SMT_MODEL_FILES = {
   ENCODER: 'smt/encoder.onnx',
   DECODER: 'smt/decoder.onnx',
+  VOCAB: 'smt/vocab.json',
+  CONFIG: 'smt/config.json',
 } as const;
 
 /** Options for running SMT++ inference */
@@ -45,32 +53,92 @@ export interface SMTResult {
   elapsedMs: number;
 }
 
-/** SMT++ model configuration */
-const SMT_CONFIG = {
-  /** Image height for encoder input */
-  imageHeight: 256,
-  /** Maximum image width (will be scaled proportionally) */
-  maxImageWidth: 2048,
-  /** Maximum decoder sequence length */
-  maxSeqLength: 1024,
-  /** Decoder vocabulary size */
-  vocabSize: 512,
-  /** End-of-sequence token ID */
-  eosTokenId: 2,
-  /** Start-of-sequence token ID */
-  sosTokenId: 1,
-  /** Padding token ID */
-  padTokenId: 0,
-  /** Encoder feature dimension */
-  encoderDim: 256,
-} as const;
+/** SMT++ vocabulary (loaded from vocab.json) */
+interface SMTVocab {
+  /** Token string → ID */
+  w2i: Record<string, number>;
+  /** ID → token string */
+  i2w: Record<string, string>;
+  bosTokenId: number;
+  eosTokenId: number;
+  padTokenId: number;
+  vocabSize: number;
+}
+
+/** SMT++ model config (loaded from config.json) */
+interface SMTModelConfig {
+  d_model: number;
+  maxlen: number;
+  out_categories: number;
+  fixed_height: number;
+  fixed_width: number;
+  bos_token_id: number;
+  eos_token_id: number;
+  pad_token_id: number;
+}
+
+/** Default config (used when config.json not available) */
+const DEFAULT_CONFIG: SMTModelConfig = {
+  d_model: 256,
+  maxlen: 1512,
+  out_categories: 4631,
+  fixed_height: 256,
+  fixed_width: 1024,
+  bos_token_id: 1,
+  eos_token_id: 2,
+  pad_token_id: 0,
+};
+
+/** Cached vocabulary and config */
+let cachedVocab: SMTVocab | null = null;
+let cachedConfig: SMTModelConfig | null = null;
+
+/**
+ * Load vocabulary from vocab.json.
+ */
+function loadVocab(modelsDir: string): SMTVocab {
+  if (cachedVocab) return cachedVocab;
+
+  const vocabPath = path.join(modelsDir, SMT_MODEL_FILES.VOCAB);
+  if (!fs.existsSync(vocabPath)) {
+    throw new Error(`SMT++ vocabulary file not found: ${vocabPath}`);
+  }
+
+  const raw = JSON.parse(fs.readFileSync(vocabPath, 'utf-8'));
+  cachedVocab = {
+    w2i: raw.w2i ?? {},
+    i2w: raw.i2w ?? {},
+    bosTokenId: raw.bos_token_id ?? DEFAULT_CONFIG.bos_token_id,
+    eosTokenId: raw.eos_token_id ?? DEFAULT_CONFIG.eos_token_id,
+    padTokenId: raw.pad_token_id ?? DEFAULT_CONFIG.pad_token_id,
+    vocabSize: raw.vocab_size ?? DEFAULT_CONFIG.out_categories,
+  };
+  return cachedVocab;
+}
+
+/**
+ * Load model config from config.json.
+ */
+function loadConfig(modelsDir: string): SMTModelConfig {
+  if (cachedConfig) return cachedConfig;
+
+  const configPath = path.join(modelsDir, SMT_MODEL_FILES.CONFIG);
+  if (!fs.existsSync(configPath)) {
+    const config: SMTModelConfig = { ...DEFAULT_CONFIG };
+    cachedConfig = config;
+    return config;
+  }
+
+  const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const config: SMTModelConfig = { ...DEFAULT_CONFIG, ...raw };
+  cachedConfig = config;
+  return config;
+}
 
 /**
  * Check if SMT++ models are available (downloaded).
  */
 export function areSMTModelsAvailable(modelManager: ModelManager): boolean {
-  const fs = require('fs');
-  const path = require('path');
   const encoderPath = path.join(modelManager.modelsDir, SMT_MODEL_FILES.ENCODER);
   const decoderPath = path.join(modelManager.modelsDir, SMT_MODEL_FILES.DECODER);
   return fs.existsSync(encoderPath) && fs.existsSync(decoderPath);
@@ -80,9 +148,11 @@ export function areSMTModelsAvailable(modelManager: ModelManager): boolean {
  * Load and preprocess image for SMT++ encoder input.
  * Resizes to fixed height, maintaining aspect ratio, then normalizes to [0, 1].
  */
-async function preprocessImageForSMT(imagePath: string): Promise<ort.Tensor> {
-  const image = sharp(imagePath);
-  const metadata = await image.metadata();
+async function preprocessImageForSMT(
+  imagePath: string,
+  config: SMTModelConfig,
+): Promise<ort.Tensor> {
+  const metadata = await sharp(imagePath).metadata();
   const origWidth = metadata.width ?? 0;
   const origHeight = metadata.height ?? 0;
 
@@ -90,14 +160,13 @@ async function preprocessImageForSMT(imagePath: string): Promise<ort.Tensor> {
     throw new Error(`Invalid image dimensions: ${origWidth}x${origHeight}`);
   }
 
-  // Calculate new width maintaining aspect ratio
-  const newHeight = SMT_CONFIG.imageHeight;
+  const newHeight = config.fixed_height;
   const newWidth = Math.min(
     Math.round((origWidth / origHeight) * newHeight),
-    SMT_CONFIG.maxImageWidth,
+    config.fixed_width,
   );
 
-  // Resize to target dimensions, convert to grayscale float
+  // Resize and convert to grayscale raw buffer
   const buffer = await sharp(imagePath)
     .resize(newWidth, newHeight, { fit: 'fill' })
     .grayscale()
@@ -115,17 +184,20 @@ async function preprocessImageForSMT(imagePath: string): Promise<ort.Tensor> {
 
 /**
  * Run SMT++ encoder to extract feature representations.
+ * Returns two tensors: 2D positional encoded (for key) and raw (for value).
  */
 async function runEncoder(
   session: ort.InferenceSession,
   inputTensor: ort.Tensor,
-): Promise<ort.Tensor> {
-  const feeds: Record<string, ort.Tensor> = { input: inputTensor };
+): Promise<{ encoder2d: ort.Tensor; encoderRaw: ort.Tensor }> {
+  const feeds: Record<string, ort.Tensor> = { pixel_values: inputTensor };
   const results = await session.run(feeds);
 
-  // The encoder output is typically named 'output' or 'features'
-  const outputName = session.outputNames[0];
-  return results[outputName];
+  // Encoder outputs: encoder_2d (with 2D positional encoding) and encoder_raw
+  const encoder2d = results['encoder_2d'] ?? results[session.outputNames[0]];
+  const encoderRaw = results['encoder_raw'] ?? results[session.outputNames[1]] ?? encoder2d;
+
+  return { encoder2d, encoderRaw };
 }
 
 /**
@@ -133,33 +205,37 @@ async function runEncoder(
  */
 async function runDecoder(
   session: ort.InferenceSession,
-  encoderOutput: ort.Tensor,
+  encoder2d: ort.Tensor,
+  encoderRaw: ort.Tensor,
+  config: SMTModelConfig,
+  vocab: SMTVocab,
   onProgress?: (step: number, maxSteps: number) => void,
   abortSignal?: AbortSignal,
 ): Promise<number[]> {
-  const tokens: number[] = [SMT_CONFIG.sosTokenId];
+  const tokens: number[] = [vocab.bosTokenId];
+  const maxSteps = config.maxlen;
 
-  for (let step = 0; step < SMT_CONFIG.maxSeqLength; step++) {
+  for (let step = 0; step < maxSteps; step++) {
     if (abortSignal?.aborted) {
       throw new Error('SMT++ inference was cancelled.');
     }
 
-    // Create decoder input tensor from current token sequence
+    // Create decoder input tensor
     const inputTokens = new BigInt64Array(tokens.map((t) => BigInt(t)));
     const tokenTensor = new ort.Tensor('int64', inputTokens, [1, tokens.length]);
 
     const feeds: Record<string, ort.Tensor> = {
-      encoder_output: encoderOutput,
-      decoder_input: tokenTensor,
+      token_ids: tokenTensor,
+      encoder_2d: encoder2d,
+      encoder_raw: encoderRaw,
     };
 
     const results = await session.run(feeds);
-    const outputName = session.outputNames[0];
-    const logits = results[outputName];
+    const logits = results['logits'] ?? results[session.outputNames[0]];
 
     // Get the last token's logits and find argmax
     const logitsData = logits.data as Float32Array;
-    const vocabSize = SMT_CONFIG.vocabSize;
+    const vocabSize = vocab.vocabSize;
     const lastTokenOffset = (tokens.length - 1) * vocabSize;
 
     let maxIdx = 0;
@@ -173,51 +249,65 @@ async function runDecoder(
     }
 
     // Check for end-of-sequence
-    if (maxIdx === SMT_CONFIG.eosTokenId) {
+    if (maxIdx === vocab.eosTokenId) {
       break;
     }
 
     tokens.push(maxIdx);
-    onProgress?.(step, SMT_CONFIG.maxSeqLength);
+    onProgress?.(step, maxSteps);
   }
 
-  return tokens.slice(1); // Remove SOS token
+  return tokens.slice(1); // Remove BOS token
 }
 
 /**
- * Placeholder: Convert token IDs back to bekern text.
- * In production, this would use the SMT++ vocabulary file.
- * For now, returns a placeholder that indicates the tokens were generated.
+ * Convert token IDs back to bekern text using the vocabulary.
  */
-function tokensTobekern(_tokens: number[]): string {
-  // This is a placeholder — actual implementation requires the vocabulary mapping
-  // from the SMT++ model's tokenizer (w2i / i2w dictionaries).
-  // For MVP, the bekern output will come from model-specific post-processing.
-  //
-  // The token-to-bekern mapping will be loaded from a vocab.json file
-  // shipped alongside the ONNX models.
-  return '';
+function tokensToBekern(tokens: number[], vocab: SMTVocab): string {
+  const parts: string[] = [];
+  for (const tokenId of tokens) {
+    const token = vocab.i2w[String(tokenId)];
+    if (token === undefined) continue;
+
+    // Decode special structural tokens
+    if (token === '<t>') {
+      parts.push('\t');
+    } else if (token === '<b>') {
+      parts.push('\n');
+    } else if (token === '<s>') {
+      parts.push(' ');
+    } else if (token === '<pad>' || token === '<bos>' || token === '<eos>') {
+      // Skip special tokens
+    } else {
+      parts.push(token);
+    }
+  }
+
+  return parts.join('');
 }
 
 /**
  * Run the full SMT++ inference pipeline.
  *
  * Pipeline:
- * 1. Load encoder and decoder models
+ * 1. Load vocab/config and ONNX models
  * 2. Preprocess image for encoder
- * 3. Run encoder to extract features
+ * 3. Run encoder to extract features (2D pos + raw)
  * 4. Run decoder autoregressively to generate token sequence
- * 5. Convert tokens to bekern notation
+ * 5. Convert tokens to bekern notation via vocabulary
  * 6. Parse bekern to ScoreData
  */
 export async function runSMT(options: SMTRunOptions): Promise<SMTResult> {
   const { imagePath, modelManager, onProgress, abortSignal } = options;
   const startTime = Date.now();
 
-  // Report initial progress
   onProgress?.({ stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 0 });
 
-  // 1. Load models
+  // 1. Load config and vocabulary
+  const config = loadConfig(modelManager.modelsDir);
+  const vocab = loadVocab(modelManager.modelsDir);
+
+  // Load ONNX models
   const encoderModel = await modelManager.loadModel(
     SMT_MODEL_FILES.ENCODER,
     SMT_MODEL_NAMES.ENCODER,
@@ -230,18 +320,21 @@ export async function runSMT(options: SMTRunOptions): Promise<SMTResult> {
   onProgress?.({ stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 10 });
 
   // 2. Preprocess image
-  const inputTensor = await preprocessImageForSMT(imagePath);
+  const inputTensor = await preprocessImageForSMT(imagePath, config);
   onProgress?.({ stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 20 });
 
   // 3. Run encoder
   onProgress?.({ stage: 'inference', currentPage: 1, totalPages: 1, percent: 25 });
-  const encoderOutput = await runEncoder(encoderModel.session, inputTensor);
+  const { encoder2d, encoderRaw } = await runEncoder(encoderModel.session, inputTensor);
   onProgress?.({ stage: 'inference', currentPage: 1, totalPages: 1, percent: 35 });
 
   // 4. Run decoder (autoregressive)
   const tokens = await runDecoder(
     decoderModel.session,
-    encoderOutput,
+    encoder2d,
+    encoderRaw,
+    config,
+    vocab,
     (step, maxSteps) => {
       const decoderPercent = 35 + Math.round((step / maxSteps) * 50);
       onProgress?.({
@@ -257,7 +350,7 @@ export async function runSMT(options: SMTRunOptions): Promise<SMTResult> {
   onProgress?.({ stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 90 });
 
   // 5. Convert tokens to bekern
-  const bekernOutput = tokensTobekern(tokens);
+  const bekernOutput = tokensToBekern(tokens, vocab);
 
   // 6. Parse bekern to ScoreData
   const scoreData = parseBekern(bekernOutput);
