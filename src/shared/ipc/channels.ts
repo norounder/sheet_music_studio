@@ -14,6 +14,7 @@ export const FILE_CHANNELS = {
 export const OMR_CHANNELS = {
   RECOGNIZE: 'omr:recognize',
   PROGRESS: 'omr:progress',
+  MODEL_DOWNLOAD_PROGRESS: 'omr:modelDownloadProgress',
 } as const;
 
 // ─── AMT 관련 채널 ───

@@ -1,7 +1,11 @@
 /**
  * OMR (Optical Music Recognition) IPC handlers (Main Process).
- * Opens image/PDF via native dialog, runs Audiveris subprocess,
- * and returns parsed ScoreDocument with review state.
+ * Orchestrates the ensemble pipeline:
+ *   1. File selection via native dialog
+ *   2. Image preprocessing (grayscale, normalize, binarize)
+ *   3. Parallel inference: Audiveris (subprocess) + SMT++ (ONNX)
+ *   4. Ensemble merging with conflict detection
+ *   5. Music theory post-processing and review state generation
  */
 
 import { dialog, BrowserWindow } from 'electron';
@@ -15,15 +19,45 @@ import { extractMxl } from './fileHandlers';
 import { detectAudiveris, getAudiverisConfig } from '../omr/audiverisManager';
 import { runAudiveris } from '../omr/audiverisRunner';
 import { generateReviewState } from '../omr/reviewGenerator';
+import { preprocessImage } from '../omr/imagePreprocessor';
+import { isPdfFile } from '../omr/pdfConverter';
+import { mergeEnsembleResults } from '../omr/ensembleMerger';
+import { areSMTModelsAvailable, runSMT } from '../omr/smtRunner';
 import { MusicXMLParser } from '../../shared/serializer/MusicXMLParser';
+import type { ModelManager } from '../omr/modelManager';
 import type { IPCResponse } from '../../shared/ipc/payloads';
 import type { OMRRecognizeResponse } from '../../shared/ipc/payloads';
 import type { ScoreDocument, ScoreMetadata } from '../../shared/types/document';
+import type { OMRProgress } from '../../shared/types/progress';
+import type { ScoreData } from '../../shared/types/measure';
+
+/** Send progress event to renderer */
+function reportProgress(
+  mainWindow: BrowserWindow | null,
+  progress: OMRProgress,
+): void {
+  if (mainWindow) {
+    sendIPCEvent(mainWindow, OMR_CHANNELS.PROGRESS, progress);
+  }
+}
+
+/** Scale Audiveris progress (0-100) to overall pipeline range */
+function scaleAudiverisProgress(percent: number): number {
+  // Audiveris progress maps to 15-65% of overall
+  return 15 + Math.round(percent * 0.5);
+}
+
+/** Scale SMT++ progress (0-100) to overall pipeline range */
+function scaleSMTProgress(percent: number): number {
+  // SMT++ progress maps to 15-65% of overall
+  return 15 + Math.round(percent * 0.5);
+}
 
 /**
  * Register OMR-related IPC handlers.
+ * Accepts an optional ModelManager for ONNX model inference.
  */
-export function registerOMRHandlers(): void {
+export function registerOMRHandlers(modelManager?: ModelManager): void {
   registerIPCHandler<void, OMRRecognizeResponse | null>(
     OMR_CHANNELS.RECOGNIZE,
     async (): Promise<IPCResponse<OMRRecognizeResponse | null>> => {
@@ -52,14 +86,16 @@ export function registerOMRHandlers(): void {
         };
       }
 
-      // 3. Detect Audiveris availability
-      const status = await detectAudiveris();
-      if (!status.available) {
+      // 3. Detect available engines
+      const audiverisStatus = await detectAudiveris();
+      const smtAvailable = modelManager ? areSMTModelsAvailable(modelManager) : false;
+
+      if (!audiverisStatus.available && !smtAvailable) {
         return {
           success: false,
           error: createIPCError(
             'OMR_MODEL_LOAD_FAILED',
-            status.error ?? 'Audiveris is not available.',
+            'No OMR engine available. Install Audiveris or download SMT++ models.',
           ),
         };
       }
@@ -70,42 +106,144 @@ export function registerOMRHandlers(): void {
       );
 
       try {
-        const config = await getAudiverisConfig();
         const startTime = Date.now();
 
-        // Get window for progress events
         const mainWindow =
           BrowserWindow.getFocusedWindow() ??
           BrowserWindow.getAllWindows()[0] ??
           null;
 
-        // 5. Run Audiveris subprocess
-        const result = await runAudiveris({
-          inputPath: filePath,
-          outputDir: tempDir,
-          config,
-          onProgress: (progress) => {
-            if (mainWindow) {
-              sendIPCEvent(mainWindow, OMR_CHANNELS.PROGRESS, progress);
-            }
-          },
+        // ── Phase 1: Image Preprocessing ──
+        reportProgress(mainWindow, {
+          stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 0,
         });
 
-        // 6. Extract MusicXML from .mxl output
-        const xmlContent = await extractMxl(result.mxlPath);
+        let preprocessedPath = filePath;
+        const isImage = !isPdfFile(filePath);
 
-        // 7. Parse to ScoreData
-        const parser = new MusicXMLParser();
-        const scoreData = parser.fromMusicXML(xmlContent);
+        if (isImage) {
+          try {
+            const preprocessResult = await preprocessImage(filePath, tempDir);
+            preprocessedPath = preprocessResult.processedPath;
+          } catch {
+            // If preprocessing fails, use original image
+            preprocessedPath = filePath;
+          }
+        }
 
-        // 8. Generate review state with heuristic confidence
-        const reviewState = generateReviewState(scoreData);
+        reportProgress(mainWindow, {
+          stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 15,
+        });
 
-        // 9. Build ScoreDocument
+        // ── Phase 2: Parallel Inference ──
+        let audiverisScoreData: ScoreData | undefined;
+        let smtScoreData: ScoreData | undefined;
+
+        // Launch both engines in parallel
+        const promises: Promise<void>[] = [];
+
+        // Audiveris pipeline
+        if (audiverisStatus.available) {
+          promises.push(
+            (async () => {
+              const config = await getAudiverisConfig();
+              const result = await runAudiveris({
+                inputPath: filePath, // Audiveris handles PDF natively
+                outputDir: path.join(tempDir, 'audiveris'),
+                config,
+                onProgress: (progress) => {
+                  reportProgress(mainWindow, {
+                    ...progress,
+                    percent: scaleAudiverisProgress(progress.percent),
+                  });
+                },
+              });
+
+              const xmlContent = await extractMxl(result.mxlPath);
+              const parser = new MusicXMLParser();
+              audiverisScoreData = parser.fromMusicXML(xmlContent);
+            })(),
+          );
+        }
+
+        // SMT++ pipeline (images only)
+        if (smtAvailable && modelManager && isImage) {
+          promises.push(
+            (async () => {
+              try {
+                const smtResult = await runSMT({
+                  imagePath: preprocessedPath,
+                  modelManager,
+                  onProgress: (progress) => {
+                    reportProgress(mainWindow, {
+                      ...progress,
+                      percent: scaleSMTProgress(progress.percent),
+                    });
+                  },
+                });
+                smtScoreData = smtResult.scoreData;
+              } catch {
+                // SMT++ failure is non-fatal — fall back to Audiveris only
+                smtScoreData = undefined;
+              }
+            })(),
+          );
+        }
+
+        // Wait for all engines to complete (or fail gracefully)
+        await Promise.allSettled(promises);
+
+        // Ensure at least one engine produced results
+        if (!audiverisScoreData && !smtScoreData) {
+          return {
+            success: false,
+            error: createIPCError(
+              'OMR_RECOGNITION_FAILED',
+              'All OMR engines failed to produce results.',
+            ),
+          };
+        }
+
+        reportProgress(mainWindow, {
+          stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 75,
+        });
+
+        // ── Phase 3: Ensemble Merging ──
+        let finalScoreData: ScoreData;
+        let mergeConflicts: import('../omr/ensembleMerger').MergeConflict[] = [];
+
+        if (audiverisScoreData && smtScoreData) {
+          // Both engines available — merge
+          const mergeResult = mergeEnsembleResults({
+            audiveris: audiverisScoreData,
+            smt: smtScoreData,
+          });
+          finalScoreData = mergeResult.merged;
+          mergeConflicts = mergeResult.conflicts;
+        } else {
+          // Single engine fallback
+          finalScoreData = audiverisScoreData ?? smtScoreData!;
+        }
+
+        reportProgress(mainWindow, {
+          stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 85,
+        });
+
+        // ── Phase 4: Music Theory Post-processing ──
+        const reviewState = generateReviewState(finalScoreData, {
+          threshold: 0.7,
+          mergeConflicts,
+        });
+
+        reportProgress(mainWindow, {
+          stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 95,
+        });
+
+        // ── Phase 5: Build ScoreDocument ──
         const now = new Date().toISOString();
         const metadata: ScoreMetadata = {
-          title: scoreData.credits?.find((c) => c.type === 'title')?.text ?? 'OMR Import',
-          composer: scoreData.credits?.find((c) => c.type === 'composer')?.text ?? '',
+          title: finalScoreData.credits?.find((c) => c.type === 'title')?.text ?? 'OMR Import',
+          composer: finalScoreData.credits?.find((c) => c.type === 'composer')?.text ?? '',
           createdAt: now,
           modifiedAt: now,
           sourceType: 'omr',
@@ -113,9 +251,13 @@ export function registerOMRHandlers(): void {
 
         const document: ScoreDocument = {
           metadata,
-          scoreData,
+          scoreData: finalScoreData,
           reviewState: reviewState.items.length > 0 ? reviewState : undefined,
         };
+
+        reportProgress(mainWindow, {
+          stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 100,
+        });
 
         return {
           success: true,
@@ -131,7 +273,7 @@ export function registerOMRHandlers(): void {
           error: createIPCError('OMR_RECOGNITION_FAILED', message, err),
         };
       } finally {
-        // 10. Cleanup temp directory
+        // Cleanup temp directory
         fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     },
