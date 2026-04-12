@@ -139,6 +139,8 @@ export class ScoreRenderer {
   private context: RenderContext | null = null;
   private renderedNotes: RenderedNote[] = [];
   private systemHeight: number = 0;
+  /** Staves indexed by [lineIndex][partIndex] = first stave of that part on that line */
+  private systemStaves: Map<number, Map<number, { first: Stave; last: Stave }>> = new Map();
 
   constructor(container: HTMLElement, config?: Partial<RenderConfig>) {
     this.container = container;
@@ -165,10 +167,16 @@ export class ScoreRenderer {
 
     // Render each part with its vertical offset within the system
     let partYOffset = 0;
-    for (const part of scoreData.parts) {
-      this.renderPart(part, partYOffset);
+    for (let pIdx = 0; pIdx < scoreData.parts.length; pIdx++) {
+      const part = scoreData.parts[pIdx];
+      this.renderPart(part, partYOffset, pIdx);
       const numStaves = part.staves || 1;
       partYOffset += numStaves * staveSpacing + partSpacing;
+    }
+
+    // Draw system brackets connecting all parts on each line
+    if (scoreData.parts.length > 1) {
+      this.drawSystemConnectors();
     }
 
     // SVG 요소에 data-element-id 속성 부착 (클릭 선택용)
@@ -179,6 +187,7 @@ export class ScoreRenderer {
   clear(): void {
     this.container.innerHTML = '';
     this.renderer = null;
+    this.systemStaves = new Map();
     this.context = null;
     this.renderedNotes = [];
   }
@@ -241,7 +250,7 @@ export class ScoreRenderer {
 
   // ─── Part 렌더링 ───
 
-  private renderPart(part: Part, partYOffset: number = 0): void {
+  private renderPart(part: Part, partYOffset: number = 0, partIndex: number = 0): void {
     if (!this.context) return;
 
     const measures = part.measures;
@@ -307,8 +316,19 @@ export class ScoreRenderer {
         staves.push(stave);
       }
 
+      // 시스템 연결선을 위해 각 줄 첫 마디의 보표 저장
+      if (isFirstInLine && staves.length > 0) {
+        if (!this.systemStaves.has(lineIndex)) {
+          this.systemStaves.set(lineIndex, new Map());
+        }
+        this.systemStaves.get(lineIndex)!.set(partIndex, {
+          first: staves[0],
+          last: staves[staves.length - 1],
+        });
+      }
+
       // 마디 번호 표시 (각 줄 첫 마디의 첫 보표 위, 첫 파트만)
-      if (this.config.showMeasureNumbers && isFirstInLine && staves[0] && partYOffset === 0) {
+      if (this.config.showMeasureNumbers && isFirstInLine && staves[0] && partIndex === 0) {
         const measureNum = measure.number ?? mIdx + 1;
         const ctx = this.context as RenderContext;
         ctx.save();
@@ -1152,6 +1172,34 @@ export class ScoreRenderer {
             }
           }
         }
+      }
+    }
+  }
+
+  // ─── System 연결선 (파트 간 bracket + barline) ───
+
+  private drawSystemConnectors(): void {
+    if (!this.context) return;
+
+    for (const [, parts] of this.systemStaves) {
+      const partIndices = [...parts.keys()].sort((a, b) => a - b);
+      if (partIndices.length < 2) continue;
+
+      const topPart = parts.get(partIndices[0])!;
+      const bottomPart = parts.get(partIndices[partIndices.length - 1])!;
+
+      try {
+        // 시스템 왼쪽 세로선 (모든 파트 연결)
+        const singleLeft = new StaveConnector(topPart.first, bottomPart.last);
+        singleLeft.setType('singleLeft');
+        singleLeft.setContext(this.context).draw();
+
+        // 시스템 오른쪽 세로선
+        const singleRight = new StaveConnector(topPart.first, bottomPart.last);
+        singleRight.setType('singleRight');
+        singleRight.setContext(this.context).draw();
+      } catch {
+        // Skip connector rendering errors
       }
     }
   }
