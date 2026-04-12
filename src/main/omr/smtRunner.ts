@@ -77,15 +77,15 @@ interface SMTModelConfig {
   pad_token_id: number;
 }
 
-/** Default config (used when config.json not available) */
+/** Default config (matched to antoniorv6/smt-grandstaff export) */
 const DEFAULT_CONFIG: SMTModelConfig = {
   d_model: 256,
   maxlen: 1512,
-  out_categories: 4631,
+  out_categories: 20578,
   fixed_height: 256,
   fixed_width: 1024,
-  bos_token_id: 1,
-  eos_token_id: 2,
+  bos_token_id: 4426,
+  eos_token_id: 8822,
   pad_token_id: 0,
 };
 
