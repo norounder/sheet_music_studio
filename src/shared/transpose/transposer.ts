@@ -97,6 +97,71 @@ export function transposeKeySignature(
   return { fifths: newFifths, mode: key.mode };
 }
 
+// ─── Key Detection ───
+
+/**
+ * ScoreData에서 현재 조를 감지한다.
+ * 첫 번째 파트의 첫 번째 마디에 명시된 조표를 사용하고,
+ * 없으면 음 분포를 분석하여 추정한다.
+ */
+export function detectKey(scoreData: ScoreData): KeySignature {
+  // 1) 명시된 조표가 있으면 그대로 사용
+  for (const part of scoreData.parts) {
+    for (const measure of part.measures) {
+      if (measure.attributes?.keySignature) {
+        return { ...measure.attributes.keySignature };
+      }
+    }
+  }
+
+  // 2) 조표가 없으면 음 분포 기반 추정 (Krumhansl-Schmuckler 간이 버전)
+  const profile = new Array(12).fill(0);
+  for (const part of scoreData.parts) {
+    for (const measure of part.measures) {
+      for (const el of measure.elements) {
+        if (el.type === 'note') {
+          const note = el as NoteElement;
+          const pc = ((STEP_TO_SEMITONE[note.pitch.step] + (note.pitch.alter ?? 0)) % 12 + 12) % 12;
+          profile[pc] += (note.duration?.divisions ?? 1);
+        }
+      }
+    }
+  }
+
+  // 장조 프로파일 가중치 (C major 기준, 회전해서 비교)
+  const majorWeights = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+  let bestFifths = 0;
+  let bestScore = -Infinity;
+
+  // 12개 장조 키에 대해 상관관계 계산
+  for (let i = 0; i < 12; i++) {
+    let score = 0;
+    for (let j = 0; j < 12; j++) {
+      score += profile[(j + i) % 12] * majorWeights[j];
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestFifths = SEMITONE_TO_FIFTHS[i];
+    }
+  }
+
+  // [-7, 7] 정규화
+  while (bestFifths > 7) bestFifths -= 12;
+  while (bestFifths < -7) bestFifths += 12;
+
+  return { fifths: bestFifths, mode: 'major' };
+}
+
+/**
+ * 현재 조에서 반음 이동 후 목표 조를 계산한다.
+ */
+export function getTargetKey(
+  sourceKey: KeySignature,
+  semitones: number,
+): KeySignature {
+  return transposeKeySignature(sourceKey, semitones);
+}
+
 // ─── ScoreData 전체 변환 ───
 
 /**
