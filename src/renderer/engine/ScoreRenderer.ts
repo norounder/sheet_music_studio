@@ -350,6 +350,7 @@ export class ScoreRenderer {
 
     // 렌더링된 음표 추적 (타이/슬러 연결 및 클릭 선택용)
     const allRenderedNotes: RenderedNote[] = [];
+    const measureStaves = new Map<number, Stave>(); // mIdx → staff 1 stave
 
     // Wedge(hairpin) 추적: start note를 저장하고 stop 시 그리기
     let wedgeStartNote: StaveNote | null = null;
@@ -420,6 +421,10 @@ export class ScoreRenderer {
           staveSvg.style.cursor = 'pointer';
         }
         staves.push(stave);
+      }
+      // 가사 렌더링용: 첫 번째 보표(staff 1) 저장
+      if (staves[0]) {
+        measureStaves.set(mIdx, staves[0]);
       }
 
       // 시스템 연결선을 위해 각 줄 첫 마디의 보표 저장
@@ -521,9 +526,14 @@ export class ScoreRenderer {
       for (const tupletGroup of measureNotes.tupletGroups) {
         if (tupletGroup.notes.length > 0) {
           try {
+            // Simplify ratio with GCD, show only number (standard notation)
+            const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+            const g = gcd(tupletGroup.actualNotes, tupletGroup.normalNotes);
             const tuplet = new Tuplet(tupletGroup.notes, {
-              numNotes: tupletGroup.actualNotes,
-              notesOccupied: tupletGroup.normalNotes,
+              numNotes: tupletGroup.actualNotes / g,
+              notesOccupied: tupletGroup.normalNotes / g,
+              ratioed: false,
+              bracketed: true,
             });
             tuplet.setContext(this.context!).draw();
           } catch (e) {
@@ -538,6 +548,9 @@ export class ScoreRenderer {
 
     // 슬러 렌더링
     this.renderSlurs(allRenderedNotes);
+
+    // 가사 렌더링 (오선 아래 고정 위치)
+    this.renderLyrics(allRenderedNotes, measureStaves);
 
     // 인스턴스에 렌더링된 음표 저장 (클릭 선택용)
     this.renderedNotes.push(...allRenderedNotes);
@@ -987,16 +1000,7 @@ export class ScoreRenderer {
         );
       }
 
-      // 가사 추가
-      if (element.lyrics) {
-        for (const lyric of element.lyrics) {
-          staveNote.addModifier(
-            new Annotation(lyric.text)
-              .setFont('Arial', 10)
-              .setVerticalJustification(Annotation.VerticalJustify.BOTTOM),
-          );
-        }
-      }
+      // 가사는 renderLyrics()에서 고정 위치에 일괄 렌더링
 
       return staveNote;
     } catch (e) {
@@ -1311,6 +1315,34 @@ export class ScoreRenderer {
   }
 
   // ─── Direction 렌더링 ───
+
+  // ─── 가사 렌더링 (오선 아래 고정 위치) ───
+
+  private renderLyrics(allRenderedNotes: RenderedNote[], measureStaves: Map<number, Stave>): void {
+    if (!this.context) return;
+    const ctx = this.context as RenderContext;
+
+    for (const rn of allRenderedNotes) {
+      if (!rn.element.lyrics || rn.element.lyrics.length === 0) continue;
+
+      const stave = measureStaves.get(rn.measureIndex);
+      if (!stave) continue;
+
+      // 음표의 X 좌표 (중앙)
+      const noteX = rn.staveNote.getAbsoluteX();
+      // 오선 하단 (5번째 줄) + 고정 오프셋
+      const baseY = stave.getYForLine(5) + 28;
+
+      ctx.save();
+      ctx.setFont('Arial', 10, 'normal');
+      for (let i = 0; i < rn.element.lyrics.length; i++) {
+        const lyric = rn.element.lyrics[i];
+        const y = baseY + i * 14; // 여러 줄 가사 간격
+        ctx.fillText(lyric.text, noteX, y);
+      }
+      ctx.restore();
+    }
+  }
 
   private renderDirections(directions: Direction[], staves: Stave[]): void {
     if (!this.context || !directions) return;
