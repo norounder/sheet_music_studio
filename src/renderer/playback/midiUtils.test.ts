@@ -187,6 +187,69 @@ describe('midiUtils', () => {
       expect(events[0].time).toBeCloseTo(0);
       expect(events[1].time).toBeCloseTo(0); // chord: same time
     });
+
+    it('should apply dynamic velocity from directions', () => {
+      const sd = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [
+            {
+              number: 1,
+              elements: [
+                { type: 'note', id: 'n1', pitch: { step: 'C', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+                { type: 'note', id: 'n2', pitch: { step: 'D', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [
+                { type: { kind: 'dynamic' as const, value: 'pp' as const }, placement: 'below' as const },
+              ],
+            },
+            {
+              number: 2,
+              elements: [
+                { type: 'note', id: 'n3', pitch: { step: 'E', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [
+                { type: { kind: 'dynamic' as const, value: 'ff' as const }, placement: 'below' as const },
+              ],
+            },
+          ],
+        }],
+      };
+
+      const events = scoreDataToEvents(sd, 120);
+      // pp = 35
+      expect(events[0].velocity).toBe(35);
+      expect(events[1].velocity).toBe(35);
+      // ff = 115
+      expect(events[2].velocity).toBe(115);
+    });
+
+    it('should interpolate velocity during crescendo', () => {
+      const sd = {
+        parts: [{
+          id: 'P1', name: 'Piano', staves: 1,
+          measures: [
+            {
+              number: 1,
+              elements: [
+                { type: 'note', id: 'n1', pitch: { step: 'C', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+                { type: 'note', id: 'n2', pitch: { step: 'D', octave: 4 }, duration: { divisions: 1, noteType: 'quarter', dots: 0 }, voice: 1, staff: 1 } as NoteElement,
+              ],
+              directions: [
+                { type: { kind: 'dynamic' as const, value: 'p' as const }, placement: 'below' as const },
+                { type: { kind: 'wedge' as const, value: { type: 'crescendo' as const } }, placement: 'below' as const },
+              ],
+            },
+          ],
+        }],
+      };
+
+      const events = scoreDataToEvents(sd, 120);
+      // First note at start of crescendo (p=50)
+      expect(events[0].velocity).toBe(50);
+      // Second note should be louder (interpolated)
+      expect(events[1].velocity).toBeGreaterThan(events[0].velocity);
+    });
   });
 
   describe('getTotalDuration', () => {

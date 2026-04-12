@@ -19,6 +19,18 @@ import {
   createDeleteNoteWithRestCommand,
   createConvertRestToNoteCommand,
   createModifyRestDurationCommand,
+  createAddMeasureCommand,
+  createDeleteMeasureCommand,
+  createChangeKeySignatureCommand,
+  createChangeTimeSignatureCommand,
+  createChangeClefCommand,
+  createAddTieCommand,
+  createDeleteTieCommand,
+  createAddSlurCommand,
+  createDeleteSlurCommand,
+  createAddLyricCommand,
+  createModifyLyricCommand,
+  createDeleteLyricCommand,
 } from '@shared/controller/commands';
 import { FILE_CHANNELS } from '@shared/ipc/channels';
 import type { IPCResponse } from '@shared/ipc/payloads';
@@ -362,6 +374,44 @@ const App: React.FC = () => {
         return;
       }
 
+      // ─── Measure operations ───
+      if (property.startsWith('measure.') && sel?.type === 'measure' && sel.measureIndex != null) {
+        const mIdx = sel.measureIndex;
+        try {
+          let cmd;
+          switch (property) {
+            case 'measure.addAfter':
+              cmd = createAddMeasureCommand(0, mIdx);
+              break;
+            case 'measure.delete':
+              cmd = createDeleteMeasureCommand(currentScoreData, 0, mIdx);
+              break;
+            case 'measure.keySignature':
+              cmd = createChangeKeySignatureCommand(currentScoreData, 0, mIdx, {
+                fifths: value as number,
+                mode: 'major',
+              });
+              break;
+            case 'measure.timeSignature': {
+              const ts = value as { beats: number; beatType: number };
+              cmd = createChangeTimeSignatureCommand(currentScoreData, 0, mIdx, ts);
+              break;
+            }
+            case 'measure.clef':
+              cmd = createChangeClefCommand(currentScoreData, 0, mIdx, {
+                sign: value as 'G' | 'F' | 'C' | 'percussion',
+                line: value === 'G' ? 2 : value === 'F' ? 4 : 3,
+                staffNumber: 1,
+              });
+              break;
+          }
+          if (cmd) controllerRef.current.executeCommand(cmd);
+        } catch (err) {
+          console.error('Measure property change error:', err);
+        }
+        return;
+      }
+
       if (!sel?.element) return;
       const elementId = sel.element.id;
 
@@ -405,6 +455,48 @@ const App: React.FC = () => {
               elementId,
               value as Articulation,
             );
+            break;
+
+          // ─── Tie ───
+          case 'tie.toggle': {
+            const noteEl = sel.element as NoteElement;
+            if (noteEl.tie) {
+              cmd = createDeleteTieCommand(currentScoreData, elementId);
+            } else {
+              cmd = createAddTieCommand(currentScoreData, elementId, { type: 'start' });
+            }
+            break;
+          }
+
+          // ─── Slur ───
+          case 'slur.addStart':
+            cmd = createAddSlurCommand(currentScoreData, elementId, {
+              type: 'start',
+              number: 1,
+            });
+            break;
+          case 'slur.delete':
+            cmd = createDeleteSlurCommand(currentScoreData, elementId, value as number);
+            break;
+
+          // ─── Lyrics ───
+          case 'lyric.add': {
+            const noteEl2 = sel.element as NoteElement;
+            const nextNum = (noteEl2.lyrics?.length ?? 0) + 1;
+            cmd = createAddLyricCommand(currentScoreData, elementId, {
+              number: nextNum,
+              syllabic: 'single',
+              text: '',
+            });
+            break;
+          }
+          case 'lyric.modify': {
+            const lm = value as { number: number; text: string };
+            cmd = createModifyLyricCommand(currentScoreData, elementId, lm.number, lm.text);
+            break;
+          }
+          case 'lyric.delete':
+            cmd = createDeleteLyricCommand(currentScoreData, elementId, value as number);
             break;
 
           // ─── Delete note (replace with rest) ───

@@ -92,11 +92,27 @@ export function durationToSeconds(duration: Duration, bpm: number): number {
   return (beats * 60) / bpm;
 }
 
+// ─── Dynamic → Velocity mapping ───
+
+const DYNAMIC_VELOCITY: Record<string, number> = {
+  pppp: 15, ppp: 25, pp: 35, p: 50, mp: 65,
+  mf: 80, f: 100, ff: 115, fff: 125, ffff: 127,
+  sfz: 120, sfp: 110, fp: 105, rf: 110, rfz: 120,
+};
+
+/** Wedge tracking state for crescendo/diminuendo */
+interface WedgeState {
+  type: 'crescendo' | 'diminuendo';
+  startTime: number;
+  startVelocity: number;
+}
+
 // ─── ScoreData → NoteEvent[] ───
 
 /**
  * Convert ScoreData to a sorted array of NoteEvents for playback.
- * Processes all parts sequentially, handling chords, rests, forward/backup.
+ * Applies dynamic markings (p, mf, f, etc.) and crescendo/diminuendo
+ * as velocity changes.
  */
 export function scoreDataToEvents(
   scoreData: ScoreData,
@@ -108,6 +124,8 @@ export function scoreDataToEvents(
     let currentTime = 0;
     let currentBpm = bpm;
     let ppq = 1;
+    let currentVelocity = 80; // Default mf
+    let wedge: WedgeState | null = null;
 
     for (let mIdx = 0; mIdx < part.measures.length; mIdx++) {
       const measure = part.measures[mIdx];
@@ -116,21 +134,40 @@ export function scoreDataToEvents(
         ppq = measure.attributes.divisions;
       }
 
+      // Process directions for tempo, dynamics, and wedge
       for (const dir of measure.directions) {
         if (dir.type.kind === 'tempo') {
           currentBpm = dir.type.bpm;
+        } else if (dir.type.kind === 'dynamic') {
+          const vel = DYNAMIC_VELOCITY[dir.type.value];
+          if (vel != null) currentVelocity = vel;
+          // End any active wedge when a new dynamic is set
+          wedge = null;
+        } else if (dir.type.kind === 'wedge') {
+          if (dir.type.value.type === 'crescendo' || dir.type.value.type === 'diminuendo') {
+            wedge = {
+              type: dir.type.value.type,
+              startTime: currentTime,
+              startVelocity: currentVelocity,
+            };
+          } else if (dir.type.value.type === 'stop' && wedge) {
+            // Wedge ended — set velocity to the target
+            if (wedge.type === 'crescendo') {
+              currentVelocity = Math.min(127, wedge.startVelocity + 30);
+            } else {
+              currentVelocity = Math.max(20, wedge.startVelocity - 30);
+            }
+            wedge = null;
+          }
         }
       }
 
-      // Group elements by voice for independent timeline processing.
-      // This handles the case where fast-xml-parser reorders elements
-      // (all notes first, then backups), breaking the backup-based
-      // voice interleaving in MusicXML.
+      // Group elements by voice
       const voiceGroups = new Map<number, { el: typeof measure.elements[0]; eIdx: number }[]>();
 
       for (let eIdx = 0; eIdx < measure.elements.length; eIdx++) {
         const el = measure.elements[eIdx];
-        if (el.type === 'backup' || el.type === 'forward') continue; // Skip — handled by voice grouping
+        if (el.type === 'backup' || el.type === 'forward') continue;
         const voice = 'voice' in el ? (el as NoteElement).voice : 0;
         if (!voiceGroups.has(voice)) voiceGroups.set(voice, []);
         voiceGroups.get(voice)!.push({ el, eIdx });
@@ -138,7 +175,6 @@ export function scoreDataToEvents(
 
       let maxMeasureTime = currentTime;
 
-      // Process each voice independently, all starting from measure start
       for (const [, group] of voiceGroups) {
         let voiceTime = currentTime;
         let lastNoteStart = currentTime;
@@ -146,17 +182,36 @@ export function scoreDataToEvents(
         for (const { el, eIdx } of group) {
           if (el.type === 'note') {
             const note = el as NoteElement;
-            // Skip grace notes (duration=0) — they don't advance timeline
             if (note.graceNote || note.duration.divisions === 0) continue;
             const dur = divisionsToSeconds(note.duration.divisions, ppq, currentBpm);
             const midiNote = pitchToMidiNote(note.pitch);
             const noteTime = note.chord ? lastNoteStart : voiceTime;
 
+            // Calculate velocity: base + wedge interpolation + per-note dynamics
+            let velocity = currentVelocity;
+
+            // Per-note dynamic override (from notations/dynamics)
+            if (note.dynamics) {
+              const noteVel = DYNAMIC_VELOCITY[note.dynamics];
+              if (noteVel != null) velocity = noteVel;
+            }
+
+            // Wedge (crescendo/diminuendo) interpolation
+            if (wedge) {
+              const elapsed = noteTime - wedge.startTime;
+              // Assume wedge spans ~4 seconds max for interpolation
+              const progress = Math.min(1, elapsed / 4);
+              const delta = wedge.type === 'crescendo' ? 30 : -30;
+              velocity = Math.max(20, Math.min(127,
+                wedge.startVelocity + delta * progress,
+              ));
+            }
+
             events.push({
               time: noteTime,
               duration: dur,
               midiNote,
-              velocity: 80,
+              velocity: Math.round(velocity),
               measureIndex: mIdx,
               elementIndex: eIdx,
             });

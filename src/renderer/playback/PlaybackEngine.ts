@@ -160,7 +160,9 @@ export class PlaybackEngine {
     for (const event of this.events) {
       const id = Tone.getTransport().schedule((time) => {
         const freq = midiNoteToFrequency(event.midiNote);
-        this.synth?.triggerAttackRelease(freq, event.duration, time);
+        // Convert MIDI velocity (0-127) to Tone.js velocity (0-1)
+        const vel = Math.max(0.05, event.velocity / 127);
+        this.synth?.triggerAttackRelease(freq, event.duration, time, vel);
       }, event.time);
       this.scheduledIds.push(id);
     }
