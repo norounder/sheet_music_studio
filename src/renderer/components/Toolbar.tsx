@@ -33,6 +33,10 @@ export interface ToolbarProps {
   canUndo?: boolean;
   /** Redo 가능 여부 */
   canRedo?: boolean;
+  /** 마디 번호 표시 여부 */
+  showMeasureNumbers?: boolean;
+  /** 마디 번호 표시 변경 콜백 */
+  onShowMeasureNumbersChange?: (show: boolean) => void;
 }
 
 const ZOOM_MIN = 0.25;
@@ -53,6 +57,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onTranspose,
   canUndo = false,
   canRedo = false,
+  showMeasureNumbers = true,
+  onShowMeasureNumbersChange,
 }) => {
   const handleZoomIn = () => {
     onZoomChange(Math.min(zoom + ZOOM_STEP, ZOOM_MAX));
@@ -117,6 +123,20 @@ const Toolbar: React.FC<ToolbarProps> = ({
         <button className="toolbar-btn" onClick={onTranspose} title="Transpose">
           <span className="icon">🎵</span>
           <span>Transpose</span>
+        </button>
+      </div>
+
+      <div className="toolbar-separator" />
+
+      {/* Measure numbers toggle */}
+      <div className="toolbar-group">
+        <button
+          className={`toolbar-btn ${showMeasureNumbers ? 'active' : ''}`}
+          onClick={() => onShowMeasureNumbersChange?.(!showMeasureNumbers)}
+          title="Toggle measure numbers"
+        >
+          <span className="icon">#</span>
+          <span>Measure No.</span>
         </button>
       </div>
 

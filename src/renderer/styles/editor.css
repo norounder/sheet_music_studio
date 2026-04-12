@@ -262,6 +262,51 @@
   color: #1e1e2e;
 }
 
+/* ─── Property Action Buttons ─── */
+
+.property-action-btn {
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  background-color: #313244;
+  color: #cdd6f4;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  margin-top: 4px;
+}
+
+.property-action-btn:hover {
+  background-color: #45475a;
+}
+
+.property-action-btn.danger {
+  background-color: #45475a;
+  border-color: #f38ba8;
+  color: #f38ba8;
+}
+
+.property-action-btn.danger:hover {
+  background-color: #f38ba8;
+  color: #1e1e2e;
+}
+
+/* ─── Note Selection Highlight ─── */
+
+.note-selected {
+  filter: drop-shadow(0 0 4px #cba6f7);
+}
+
+.note-selected * {
+  fill: #7c3aed;
+  stroke: #7c3aed;
+}
+
+[data-element-id]:hover {
+  filter: drop-shadow(0 0 2px #a78bfa);
+}
+
 .no-selection {
   display: flex;
   align-items: center;

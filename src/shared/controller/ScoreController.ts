@@ -77,6 +77,26 @@ export class ScoreController implements IScoreController {
     throw new Error('importLocalAudio is not implemented yet. AMT pipeline required.');
   }
 
+  // ─── 데이터 설정 ───
+
+  setScoreData(scoreData: ScoreData): void {
+    const now = new Date().toISOString();
+    this.document = {
+      metadata: {
+        title: scoreData.credits?.find((c) => c.type === 'title')?.text ?? '',
+        composer:
+          scoreData.credits?.find((c) => c.type === 'composer')?.text ?? '',
+        createdAt: now,
+        modifiedAt: now,
+        sourceType: 'musicxml',
+      },
+      scoreData,
+    };
+    this.undoStack = [];
+    this.redoStack = [];
+    this.notifyListeners();
+  }
+
   // ─── 편집 위임 ───
 
   executeCommand(command: EditCommand): void {

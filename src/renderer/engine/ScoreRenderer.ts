@@ -90,6 +90,8 @@ export interface RenderConfig {
   systemSpacing: number;
   /** 한 줄에 표시할 마디 수 */
   measuresPerLine: number;
+  /** 마디 번호 표시 여부 */
+  showMeasureNumbers: boolean;
 }
 
 const DEFAULT_CONFIG: RenderConfig = {
@@ -100,6 +102,7 @@ const DEFAULT_CONFIG: RenderConfig = {
   staveSpacing: 120,
   systemSpacing: 180,
   measuresPerLine: 4,
+  showMeasureNumbers: true,
 };
 
 // ─── 내부 타입 ───
@@ -276,6 +279,16 @@ export class ScoreRenderer {
         const stave = this.createStave(x, y, thisWidth, measure, staffNum, isFirstInLine, part, currentKeyFifths);
         stave.setContext(this.context).draw();
         staves.push(stave);
+      }
+
+      // 마디 번호 표시 (첫 번째 보표 위)
+      if (this.config.showMeasureNumbers && staves[0]) {
+        const measureNum = measure.number ?? mIdx + 1;
+        const ctx = this.context as RenderContext;
+        ctx.save();
+        ctx.setFont('Arial', 10, 'normal');
+        ctx.fillText(String(measureNum), x + 4, staves[0].getYForLine(0) - 10);
+        ctx.restore();
       }
 
       // 대보표 연결선 (grand staff connector)

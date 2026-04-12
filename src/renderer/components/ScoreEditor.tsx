@@ -6,8 +6,9 @@
  */
 
 import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
-import type { ScoreData } from '@shared/types';
+import type { ScoreData, NoteElement, RestElement } from '@shared/types';
 import type { SelectedElement } from './PropertyPanel';
+import { findElementLocation } from '@shared/controller/commands/scoreDataUtils';
 import ScoreCanvas from './ScoreCanvas';
 import type { RenderConfig } from '../engine';
 
@@ -80,20 +81,54 @@ const ScoreEditor: React.FC<ScoreEditorProps> = ({
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent) => {
-      // If clicking on the background (not on a note), clear selection
       const target = e.target as HTMLElement;
-      const isNoteElement =
-        target.closest('.vf-stavenote') ||
-        target.closest('.vf-note') ||
-        target.tagName === 'rect' ||
-        target.tagName === 'path';
 
-      if (!isNoteElement) {
-        onSelectionChange(null);
+      // data-element-id를 가진 가장 가까운 조상 SVG 그룹 찾기
+      const noteGroup = target.closest('[data-element-id]') as HTMLElement | null;
+
+      if (noteGroup) {
+        const elementId = noteGroup.getAttribute('data-element-id');
+        if (elementId) {
+          const loc = findElementLocation(scoreData, elementId);
+          if (loc) {
+            const el = scoreData.parts[loc.partIndex].measures[loc.measureIndex].elements[loc.elementIndex];
+            if (el.type === 'note') {
+              onSelectionChange({ type: 'note', element: el as NoteElement });
+              return;
+            } else if (el.type === 'rest') {
+              onSelectionChange({ type: 'rest', element: el as RestElement });
+              return;
+            }
+          }
+        }
       }
+
+      // 배경 클릭 시 선택 해제
+      onSelectionChange(null);
     },
-    [onSelectionChange],
+    [onSelectionChange, scoreData],
   );
+
+  // 선택된 음표에 시각적 하이라이트 적용
+  useEffect(() => {
+    const container = editorRef.current;
+    if (!container) return;
+
+    // 이전 하이라이트 제거
+    container.querySelectorAll('.note-selected').forEach((el) => {
+      el.classList.remove('note-selected');
+    });
+
+    // 새 하이라이트 적용
+    if (selected?.element) {
+      const el = container.querySelector(
+        `[data-element-id="${selected.element.id}"]`,
+      );
+      if (el) {
+        el.classList.add('note-selected');
+      }
+    }
+  }, [selected]);
 
   return (
     <div

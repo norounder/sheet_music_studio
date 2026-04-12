@@ -51,6 +51,11 @@ export interface IScoreController {
   /** 템포 설정 */
   setTempo(bpm: number): void;
 
+  // ─── 데이터 설정 ───
+
+  /** ScoreData를 직접 설정 (데모/외부 데이터 로드용) */
+  setScoreData(scoreData: ScoreData): void;
+
   // ─── 상태 조회 ───
 
   /** 현재 문서 반환 */

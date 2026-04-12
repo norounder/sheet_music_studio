@@ -6,11 +6,11 @@
  */
 
 import React, { useState } from 'react';
-import type { NoteElement, NoteType, PitchStep, Articulation } from '@shared/types';
+import type { NoteElement, RestElement, NoteType, PitchStep, Articulation } from '@shared/types';
 
 export interface SelectedElement {
   type: 'note' | 'rest' | 'measure';
-  element?: NoteElement;
+  element?: NoteElement | RestElement;
   measureIndex?: number;
 }
 
@@ -62,7 +62,14 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
     );
   }
 
-  const noteElement = selected?.type === 'note' ? selected.element : null;
+  const noteElement =
+    selected?.type === 'note' && selected.element?.type === 'note'
+      ? (selected.element as NoteElement)
+      : null;
+  const restElement =
+    selected?.type === 'rest' && selected.element?.type === 'rest'
+      ? (selected.element as RestElement)
+      : null;
 
   return (
     <div className="property-panel" role="complementary" aria-label="Property panel">
@@ -169,6 +176,26 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
               </div>
             </div>
 
+            {/* Stem direction section */}
+            <div className="property-section">
+              <div className="property-section-title">Stem</div>
+              <div className="property-row">
+                <span className="property-label">Direction</span>
+                <select
+                  className="property-select"
+                  value={noteElement.stem ?? 'auto'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onPropertyChange?.('stem', val === 'auto' ? undefined : val);
+                  }}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="up">Up</option>
+                  <option value="down">Down</option>
+                </select>
+              </div>
+            </div>
+
             {/* Voice / Staff section */}
             <div className="property-section">
               <div className="property-section-title">Voice &amp; Staff</div>
@@ -203,9 +230,109 @@ const PropertyPanel: React.FC<PropertyPanelProps> = ({
                 })}
               </div>
             </div>
+
+            {/* Delete note */}
+            <div className="property-section">
+              <button
+                className="property-action-btn danger"
+                onClick={() => onPropertyChange?.('note.delete', null)}
+                title="Delete note (replace with rest)"
+              >
+                Delete Note
+              </button>
+            </div>
+          </>
+        ) : restElement ? (
+          <>
+            {/* Rest info */}
+            <div className="property-section">
+              <div className="property-section-title">Rest</div>
+              <div className="property-row">
+                <span className="property-label">Type</span>
+                <select
+                  className="property-select"
+                  value={restElement.duration.noteType}
+                  onChange={(e) =>
+                    onPropertyChange?.('rest.duration.noteType', e.target.value)
+                  }
+                >
+                  {NOTE_TYPES.map((nt) => (
+                    <option key={nt.value} value={nt.value}>{nt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="property-row">
+                <span className="property-label">Dots</span>
+                <input
+                  className="property-input"
+                  type="number"
+                  min={0}
+                  max={2}
+                  value={restElement.duration.dots}
+                  onChange={(e) =>
+                    onPropertyChange?.('rest.duration.dots', parseInt(e.target.value, 10))
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Voice / Staff */}
+            <div className="property-section">
+              <div className="property-section-title">Voice &amp; Staff</div>
+              <div className="property-row">
+                <span className="property-label">Voice</span>
+                <span className="property-value">{restElement.voice}</span>
+              </div>
+              <div className="property-row">
+                <span className="property-label">Staff</span>
+                <span className="property-value">{restElement.staff}</span>
+              </div>
+            </div>
+
+            {/* Convert to note */}
+            <div className="property-section">
+              <div className="property-section-title">Convert</div>
+              <div className="property-row">
+                <span className="property-label">Pitch</span>
+                <select
+                  className="property-select"
+                  defaultValue="C"
+                  id="convert-pitch-step"
+                >
+                  {PITCH_STEPS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="property-row">
+                <span className="property-label">Octave</span>
+                <input
+                  className="property-input"
+                  type="number"
+                  min={0}
+                  max={9}
+                  defaultValue={4}
+                  id="convert-pitch-octave"
+                />
+              </div>
+              <button
+                className="property-action-btn"
+                onClick={() => {
+                  const stepEl = document.getElementById('convert-pitch-step') as HTMLSelectElement;
+                  const octEl = document.getElementById('convert-pitch-octave') as HTMLInputElement;
+                  onPropertyChange?.('rest.convertToNote', {
+                    step: stepEl?.value ?? 'C',
+                    octave: parseInt(octEl?.value ?? '4', 10),
+                  });
+                }}
+                title="Convert rest to note"
+              >
+                Convert to Note
+              </button>
+            </div>
           </>
         ) : (
-          <div className="no-selection">Select a note to edit</div>
+          <div className="no-selection">Select a note or rest to edit</div>
         )}
       </div>
     </div>

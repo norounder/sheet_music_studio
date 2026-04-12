@@ -4,11 +4,22 @@
  * 메인 레이아웃: Toolbar (상단) + ScoreEditor (중앙) + PropertyPanel (우측)
  * 데모용 C Major Scale ScoreData를 생성하여 앱 시작 시 표시한다.
  * 파일 열기: Toolbar Open → IPC file:open → ScoreController.openFile → 렌더링
+ * 편집: PropertyPanel → handlePropertyChange → command → ScoreController → re-render
  */
 
-import React, { useState, useCallback, useRef } from 'react';
-import type { ScoreData, NoteElement } from '@shared/types';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import type { ScoreData, NoteElement, RestElement, NoteType, PitchStep, Articulation } from '@shared/types';
 import { ScoreController } from '@shared/controller/ScoreController';
+import {
+  findElementLocation,
+  createModifyPitchCommand,
+  createModifyNoteCommand,
+  createModifyDurationWithFillCommand,
+  createToggleArticulationCommand,
+  createDeleteNoteWithRestCommand,
+  createConvertRestToNoteCommand,
+  createModifyRestDurationCommand,
+} from '@shared/controller/commands';
 import { FILE_CHANNELS } from '@shared/ipc/channels';
 import type { IPCResponse } from '@shared/ipc/payloads';
 import Toolbar from './components/Toolbar';
@@ -80,12 +91,90 @@ function createDemoScoreData(): ScoreData {
 }
 
 const App: React.FC = () => {
+  const controllerRef = useRef<ScoreController>(new ScoreController());
   const [scoreData, setScoreData] = useState<ScoreData>(createDemoScoreData);
   const [zoom, setZoom] = useState(1.0);
   const [staveWidth, setStaveWidth] = useState(350);
   const [selected, setSelected] = useState<SelectedElement | null>(null);
+  const [canUndoState, setCanUndo] = useState(false);
+  const [canRedoState, setCanRedo] = useState(false);
+  const [showMeasureNumbers, setShowMeasureNumbers] = useState(true);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
-  const controllerRef = useRef<ScoreController>(new ScoreController());
+  // Initialize controller with demo data
+  const [initialized, setInitialized] = useState(false);
+  useEffect(() => {
+    if (!initialized) {
+      controllerRef.current.setScoreData(createDemoScoreData());
+      setInitialized(true);
+    }
+  }, [initialized]);
+
+  // Subscribe to controller changes
+  useEffect(() => {
+    return controllerRef.current.onChange((newData) => {
+      setScoreData(newData);
+      setCanUndo(controllerRef.current.canUndo());
+      setCanRedo(controllerRef.current.canRedo());
+
+      // Re-resolve selection by ID
+      const sel = selectedRef.current;
+      if (sel?.element) {
+        const loc = findElementLocation(newData, sel.element.id);
+        if (loc) {
+          const el =
+            newData.parts[loc.partIndex].measures[loc.measureIndex].elements[
+              loc.elementIndex
+            ];
+          if (el.type === 'note') {
+            setSelected({ type: 'note', element: el });
+          } else if (el.type === 'rest') {
+            setSelected({ type: 'rest', element: el as RestElement });
+          }
+        } else {
+          // Element was removed (e.g., deleted note replaced with rest)
+          setSelected(null);
+        }
+      }
+    });
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        controllerRef.current.undo();
+      } else if (
+        (mod && e.key === 'y') ||
+        (mod && e.shiftKey && e.key === 'Z')
+      ) {
+        e.preventDefault();
+        controllerRef.current.redo();
+      }
+      // Delete key deletes selected note
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const sel = selectedRef.current;
+        const sd = controllerRef.current.getScoreData();
+        if (sel?.element?.type === 'note' && sd) {
+          e.preventDefault();
+          try {
+            const cmd = createDeleteNoteWithRestCommand(sd, sel.element.id);
+            controllerRef.current.executeCommand(cmd);
+          } catch (err) {
+            console.error('Delete error:', err);
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleUndo = useCallback(() => controllerRef.current.undo(), []);
+  const handleRedo = useCallback(() => controllerRef.current.redo(), []);
 
   const handleOpen = useCallback(async () => {
     try {
@@ -99,7 +188,6 @@ const App: React.FC = () => {
         return;
       }
 
-      // 사용자가 다이얼로그를 취소한 경우
       if (response.data === null) {
         return;
       }
@@ -107,6 +195,9 @@ const App: React.FC = () => {
       const { content } = response.data;
       const doc = controllerRef.current.openFile(content);
       setScoreData(doc.scoreData);
+      setCanUndo(false);
+      setCanRedo(false);
+      setSelected(null);
     } catch (err) {
       console.error('File open error:', err);
       alert('파일을 여는 중 오류가 발생했습니다.');
@@ -125,12 +216,95 @@ const App: React.FC = () => {
 
   const handlePropertyChange = useCallback(
     (property: string, value: unknown) => {
-      console.log('Property change:', property, value);
+      const currentScoreData = controllerRef.current.getScoreData();
+      const sel = selectedRef.current;
+      if (!currentScoreData || !sel?.element) return;
+
+      const elementId = sel.element.id;
+
+      try {
+        let cmd;
+        switch (property) {
+          // ─── Note properties ───
+          case 'pitch.step':
+            cmd = createModifyPitchCommand(currentScoreData, elementId, {
+              step: value as PitchStep,
+            });
+            break;
+          case 'pitch.octave':
+            cmd = createModifyPitchCommand(currentScoreData, elementId, {
+              octave: value as number,
+            });
+            break;
+          case 'pitch.alter':
+            cmd = createModifyPitchCommand(currentScoreData, elementId, {
+              alter: value as number,
+            });
+            break;
+          case 'duration.noteType':
+            cmd = createModifyDurationWithFillCommand(currentScoreData, elementId, {
+              noteType: value as NoteType,
+            });
+            break;
+          case 'duration.dots':
+            cmd = createModifyDurationWithFillCommand(currentScoreData, elementId, {
+              dots: value as number,
+            });
+            break;
+          case 'stem':
+            cmd = createModifyNoteCommand(currentScoreData, elementId, {
+              stem: value as NoteElement['stem'],
+            });
+            break;
+          case 'articulation.toggle':
+            cmd = createToggleArticulationCommand(
+              currentScoreData,
+              elementId,
+              value as Articulation,
+            );
+            break;
+
+          // ─── Delete note (replace with rest) ───
+          case 'note.delete':
+            cmd = createDeleteNoteWithRestCommand(currentScoreData, elementId);
+            break;
+
+          // ─── Rest properties ───
+          case 'rest.duration.noteType':
+            cmd = createModifyRestDurationCommand(currentScoreData, elementId, {
+              noteType: value as NoteType,
+            });
+            break;
+          case 'rest.duration.dots':
+            cmd = createModifyRestDurationCommand(currentScoreData, elementId, {
+              dots: value as number,
+            });
+            break;
+
+          // ─── Convert rest to note ───
+          case 'rest.convertToNote': {
+            const pitch = value as { step: string; octave: number };
+            cmd = createConvertRestToNoteCommand(
+              currentScoreData,
+              elementId,
+              pitch,
+            );
+            break;
+          }
+
+          default:
+            console.warn('Unknown property:', property);
+            return;
+        }
+        controllerRef.current.executeCommand(cmd);
+      } catch (err) {
+        console.error('Property change error:', err);
+      }
     },
     [],
   );
 
-  const renderConfig = React.useMemo(() => ({ staveWidth }), [staveWidth]);
+  const renderConfig = React.useMemo(() => ({ staveWidth, showMeasureNumbers }), [staveWidth, showMeasureNumbers]);
 
   return (
     <div className="editor-layout">
@@ -141,8 +315,12 @@ const App: React.FC = () => {
         onStaveWidthChange={setStaveWidth}
         onOpen={handleOpen}
         onSave={handleSave}
-        canUndo={false}
-        canRedo={false}
+        canUndo={canUndoState}
+        canRedo={canRedoState}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        showMeasureNumbers={showMeasureNumbers}
+        onShowMeasureNumbersChange={setShowMeasureNumbers}
       />
       <div className="main-area">
         <ScoreEditor
