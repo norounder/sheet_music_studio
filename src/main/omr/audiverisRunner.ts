@@ -16,7 +16,7 @@ export interface AudiverisRunOptions {
   inputPath: string;
   /** Temporary output directory for .mxl files */
   outputDir: string;
-  /** Audiveris configuration (java + jar paths) */
+  /** Audiveris configuration (native exe or java+jar) */
   config: AudiverisConfig;
   /** Timeout in milliseconds (default: 300_000 = 5 minutes) */
   timeoutMs?: number;
@@ -127,16 +127,31 @@ export async function runAudiveris(
       return;
     }
 
-    const args = [
-      '-jar', config.audiverisJarPath,
-      '-batch',
-      '-transcribe',
-      '-export',
-      '-output', outputDir,
-      inputPath,
-    ];
+    // Build command based on mode (native exe vs java -jar)
+    let command: string;
+    let args: string[];
 
-    const proc = spawn(config.javaPath, args, {
+    if (config.mode === 'native') {
+      command = config.executablePath;
+      args = [
+        '-batch',
+        '-export',
+        '-output', outputDir,
+        inputPath,
+      ];
+    } else {
+      command = config.executablePath;
+      args = [
+        '-jar', config.jarPath!,
+        '-batch',
+        '-transcribe',
+        '-export',
+        '-output', outputDir,
+        inputPath,
+      ];
+    }
+
+    const proc = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

@@ -208,7 +208,17 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         }
 
         // Wait for all engines to complete (or fail gracefully)
-        await Promise.allSettled(promises);
+        const settledResults = await Promise.allSettled(promises);
+
+        // Log engine results for debugging
+        console.log('[OMR] Engine results:');
+        console.log(`  Audiveris: ${useAudiveris ? (audiverisScoreData ? `${audiverisScoreData.parts.length} parts, ${audiverisScoreData.parts[0]?.measures.length ?? 0} measures` : 'failed') : 'disabled'}`);
+        console.log(`  SMT++: ${useSMT ? (smtScoreData ? `${smtScoreData.parts.length} parts, ${smtScoreData.parts[0]?.measures.length ?? 0} measures` : 'failed') : 'disabled'}`);
+        for (const [i, r] of settledResults.entries()) {
+          if (r.status === 'rejected') {
+            console.error(`  Engine ${i} error:`, r.reason);
+          }
+        }
 
         // Ensure at least one engine produced results
         if (!audiverisScoreData && !smtScoreData) {
