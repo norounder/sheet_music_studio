@@ -1,0 +1,29 @@
+{
+  "$schema": "./omr.schema.json",
+  "comment": "OMR engine configuration. Auto-detected values can be overridden here.",
+
+  "engine": {
+    "mode": "auto",
+    "comment_mode": "auto: use both if available | audiveris-only | smt-only"
+  },
+
+  "inference": {
+    "provider": "auto",
+    "comment_provider": "auto: DirectML(Win GPU) > CPU | dml | cpu",
+    "threads": 0,
+    "comment_threads": "0 = auto (use all cores), or set specific number"
+  },
+
+  "smt": {
+    "maxTokens": 1512,
+    "comment_maxTokens": "Maximum decoder output length. Lower = faster. 500 is enough for most hymns."
+  },
+
+  "preprocessing": {
+    "enabled": true,
+    "targetDPI": 300,
+    "binarize": true,
+    "denoise": true,
+    "normalizeContrast": true
+  }
+}

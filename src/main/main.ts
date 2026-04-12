@@ -5,6 +5,7 @@ import path from 'path';
 import { registerFileHandlers } from './ipc/fileHandlers';
 import { registerOMRHandlers } from './ipc/omrHandlers';
 import { ModelManager } from './omr/modelManager';
+import { loadOMRConfig, resolveProvider } from './omr/omrConfig';
 
 let mainWindow: BrowserWindow | null = null;
 let modelManager: ModelManager | null = null;
@@ -39,9 +40,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // Initialize ONNX model manager
+  // Load OMR config and initialize ONNX model manager
+  const omrConfig = loadOMRConfig();
   modelManager = new ModelManager({
-    preferredProvider: process.platform === 'win32' ? 'dml' : 'cpu',
+    preferredProvider: resolveProvider(omrConfig.inference.provider),
   });
 
   registerFileHandlers();

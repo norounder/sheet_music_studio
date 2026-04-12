@@ -23,6 +23,7 @@ import { preprocessImage } from '../omr/imagePreprocessor';
 import { isPdfFile } from '../omr/pdfConverter';
 import { mergeEnsembleResults } from '../omr/ensembleMerger';
 import { areSMTModelsAvailable, runSMT } from '../omr/smtRunner';
+import { loadOMRConfig } from '../omr/omrConfig';
 import { MusicXMLParser } from '../../shared/serializer/MusicXMLParser';
 import type { ModelManager } from '../omr/modelManager';
 import type { IPCResponse } from '../../shared/ipc/payloads';
@@ -86,11 +87,16 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         };
       }
 
-      // 3. Detect available engines
+      // 3. Detect available engines (respecting config)
+      const omrConfig = loadOMRConfig();
       const audiverisStatus = await detectAudiveris();
       const smtAvailable = modelManager ? areSMTModelsAvailable(modelManager) : false;
 
-      if (!audiverisStatus.available && !smtAvailable) {
+      // Apply engine mode from config
+      const useAudiveris = audiverisStatus.available && omrConfig.engine.mode !== 'smt-only';
+      const useSMT = smtAvailable && omrConfig.engine.mode !== 'audiveris-only';
+
+      if (!useAudiveris && !useSMT) {
         const details: string[] = [];
         if (!audiverisStatus.available) {
           details.push(`Audiveris: ${audiverisStatus.error ?? 'Java 17+ and Audiveris JAR not found'}`);
@@ -128,12 +134,16 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         let preprocessedPath = filePath;
         const isImage = !isPdfFile(filePath);
 
-        if (isImage) {
+        if (isImage && omrConfig.preprocessing.enabled) {
           try {
-            const preprocessResult = await preprocessImage(filePath, tempDir);
+            const preprocessResult = await preprocessImage(filePath, tempDir, {
+              targetDPI: omrConfig.preprocessing.targetDPI,
+              binarize: omrConfig.preprocessing.binarize,
+              denoise: omrConfig.preprocessing.denoise,
+              normalizeContrast: omrConfig.preprocessing.normalizeContrast,
+            });
             preprocessedPath = preprocessResult.processedPath;
           } catch {
-            // If preprocessing fails, use original image
             preprocessedPath = filePath;
           }
         }
@@ -150,7 +160,7 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         const promises: Promise<void>[] = [];
 
         // Audiveris pipeline
-        if (audiverisStatus.available) {
+        if (useAudiveris) {
           promises.push(
             (async () => {
               const config = await getAudiverisConfig();
@@ -174,7 +184,7 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         }
 
         // SMT++ pipeline (images only)
-        if (smtAvailable && modelManager && isImage) {
+        if (useSMT && modelManager && isImage) {
           promises.push(
             (async () => {
               try {
