@@ -114,27 +114,35 @@ const DEFAULT_CONFIG: RenderConfig = {
 
 // ─── 마디 너비 계산 ───
 
-const MIN_MEASURE_WIDTH = 150;
-const NOTE_SPACING = 25;
-const BASE_MEASURE_WIDTH = 80;
-const CLEF_KEY_EXTRA = 80; // clef + key signature space for first-in-line
+const MIN_MEASURE_WIDTH = 120;
+const NOTE_SPACING = 22;
+const BASE_MEASURE_WIDTH = 60;
+const CLEF_KEY_EXTRA = 80;
+const DEFAULT_STAVE_WIDTH = 350; // reference for density scaling
 
-/** Calculate dynamic width for a measure based on note density */
-function calculateMeasureWidth(measure: Measure, isFirstInLine: boolean): number {
-  // Count elements that take horizontal space
+/**
+ * Calculate dynamic width for a measure based on note density.
+ * @param densityScale - derived from staveWidth slider (350=1.0x)
+ */
+function calculateMeasureWidth(
+  measure: Measure,
+  isFirstInLine: boolean,
+  densityScale: number = 1.0,
+): number {
   let noteCount = 0;
   for (const el of measure.elements) {
     if (el.type === 'note' || el.type === 'rest') noteCount++;
   }
-  const contentWidth = BASE_MEASURE_WIDTH + noteCount * NOTE_SPACING;
+  const contentWidth = (BASE_MEASURE_WIDTH + noteCount * NOTE_SPACING) * densityScale;
   const extra = isFirstInLine ? CLEF_KEY_EXTRA : 0;
-  return Math.max(MIN_MEASURE_WIDTH, contentWidth) + extra;
+  return Math.max(MIN_MEASURE_WIDTH * densityScale, contentWidth) + extra;
 }
 
 /** Layout measures into lines based on available width */
 function layoutMeasuresIntoLines(
   measures: Measure[],
   availableWidth: number,
+  densityScale: number = 1.0,
 ): { startIdx: number; endIdx: number; widths: number[] }[] {
   const lines: { startIdx: number; endIdx: number; widths: number[] }[] = [];
   let lineStart = 0;
@@ -143,7 +151,7 @@ function layoutMeasuresIntoLines(
 
   for (let i = 0; i < measures.length; i++) {
     const isFirstInLine = i === lineStart;
-    const w = calculateMeasureWidth(measures[i], isFirstInLine);
+    const w = calculateMeasureWidth(measures[i], isFirstInLine, densityScale);
 
     if (lineWidth + w > availableWidth && lineWidths.length > 0) {
       // Stretch widths to fill available width
@@ -157,7 +165,7 @@ function layoutMeasuresIntoLines(
       lineWidth = 0;
       lineWidths = [];
       // Recalculate as first in new line
-      const wFirst = calculateMeasureWidth(measures[i], true);
+      const wFirst = calculateMeasureWidth(measures[i], true, densityScale);
       lineWidth = wFirst;
       lineWidths.push(wFirst);
     } else {
@@ -226,9 +234,12 @@ export class ScoreRenderer {
     );
     const availableWidth = this.config.containerWidth
       ?? (this.config.staveStartX + this.config.staveWidth * this.config.measuresPerLine + 100);
+    // staveWidth slider controls note density: 350=1.0x, 200=0.57x, 600=1.71x
+    const densityScale = (this.config.staveWidth ?? DEFAULT_STAVE_WIDTH) / DEFAULT_STAVE_WIDTH;
     this.measureLayout = layoutMeasuresIntoLines(
       maxMeasuresPart.measures,
       availableWidth - this.config.staveStartX - 20,
+      densityScale,
     );
 
     this.initRenderer(scoreData);
