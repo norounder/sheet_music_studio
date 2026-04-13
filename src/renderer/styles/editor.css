@@ -131,6 +131,13 @@
   opacity: 0.85;
 }
 
+.tb-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
 .toolbar-btn.active {
   background: var(--accent);
   color: var(--text-inverse);
