@@ -4,8 +4,11 @@ import os from 'os';
 import path from 'path';
 import { registerFileHandlers } from './ipc/fileHandlers';
 import { registerOMRHandlers } from './ipc/omrHandlers';
+import { ModelManager } from './omr/modelManager';
+import { loadOMRConfig, resolveProvider } from './omr/omrConfig';
 
 let mainWindow: BrowserWindow | null = null;
+let modelManager: ModelManager | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -37,8 +40,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Load OMR config and initialize ONNX model manager
+  const omrConfig = loadOMRConfig();
+  modelManager = new ModelManager({
+    preferredProvider: resolveProvider(omrConfig.inference.provider),
+  });
+
   registerFileHandlers();
-  registerOMRHandlers();
+  registerOMRHandlers(modelManager);
   createWindow();
 
   app.on('activate', () => {
@@ -54,8 +63,15 @@ app.on('window-all-closed', () => {
   }
 });
 
-// Cleanup orphaned OMR temp directories on quit
+// Cleanup on quit: temp dirs + ONNX sessions
 app.on('will-quit', async () => {
+  // Dispose ONNX model sessions
+  if (modelManager) {
+    await modelManager.dispose().catch(() => {});
+    modelManager = null;
+  }
+
+  // Cleanup orphaned OMR temp directories
   try {
     const tmpBase = os.tmpdir();
     const entries = await fs.promises.readdir(tmpBase);

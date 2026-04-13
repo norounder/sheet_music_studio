@@ -71,7 +71,23 @@ export interface ReviewItem {
   measureIndex: number;
   /** 교정 상태 */
   status: 'pending' | 'accepted' | 'edited' | 'skipped';
+  /** 진단 사유 (왜 플래그되었는지) */
+  reason?: ReviewReason;
 }
+
+/** 리뷰 플래그 사유 */
+export type ReviewReason =
+  | { type: 'rhythm-mismatch'; expected: number; actual: number; voice: number; excessDivisions: number }
+  | { type: 'out-of-range'; midi: number; clefRange: { low: number; high: number } }
+  | { type: 'grace-note' }
+  | { type: 'short-note'; noteType: string }
+  | { type: 'double-accidental'; alter: number }
+  | { type: 'tuplet' }
+  | { type: 'tie-invalid'; description: string }
+  | { type: 'voice-crossing' }
+  | { type: 'lyric-gap' }
+  | { type: 'repeat-unmatched' }
+  | { type: 'ensemble-conflict'; description: string };
 
 /** 대체 음표 후보 (AMT 인식 결과) */
 export interface AlternativeNote {

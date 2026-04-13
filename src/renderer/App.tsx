@@ -42,6 +42,8 @@ import PropertyPanel, { type SelectedElement } from './components/PropertyPanel'
 import TransposeDialog from './components/TransposeDialog';
 import OMRImportDialog from './components/OMRImportDialog';
 import ReviewPanel from './components/ReviewPanel';
+import SettingsDialog from './components/SettingsDialog';
+import type { AppSettings } from './components/SettingsDialog';
 import { createTransposeCommand } from '@shared/controller/commands';
 import { PlaybackEngine, type PlaybackState, type PlaybackPosition } from './playback';
 import './styles/editor.css';
@@ -123,6 +125,13 @@ const App: React.FC = () => {
   const [reviewState, setReviewState] = useState<ReviewState | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
   const [tempo, setTempo] = useState(120);
+  const [showSettings, setShowSettings] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    engine: { mode: 'audiveris-only' },
+    inference: { provider: 'auto', threads: 0 },
+    smt: { maxTokens: 1512 },
+    preprocessing: { enabled: true, targetDPI: 300, binarize: true, denoise: true, normalizeContrast: true },
+  });
   const [playbackPosition, setPlaybackPosition] = useState<PlaybackPosition | null>(null);
   const playbackRef = useRef<PlaybackEngine>(new PlaybackEngine());
   const selectedRef = useRef(selected);
@@ -641,6 +650,7 @@ const App: React.FC = () => {
         onTempoChange={handleTempoChange}
         showMeasureNumbers={showMeasureNumbers}
         onShowMeasureNumbersChange={setShowMeasureNumbers}
+        onSettings={() => setShowSettings(true)}
       />
       <div className="main-area">
         <ScoreEditor
@@ -677,6 +687,13 @@ const App: React.FC = () => {
           onAccept={handleReviewAccept}
           onSkip={handleReviewSkip}
           onClose={handleReviewClose}
+        />
+      )}
+      {showSettings && (
+        <SettingsDialog
+          settings={appSettings}
+          onSave={setAppSettings}
+          onClose={() => setShowSettings(false)}
         />
       )}
     </div>

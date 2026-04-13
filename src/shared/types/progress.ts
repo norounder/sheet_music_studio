@@ -45,6 +45,8 @@ export interface OMRProgress {
   totalPages: number;
   /** 진행률 (0 ~ 100) */
   percent: number;
+  /** 현재 수행 중인 작업 설명 (UI 표시용) */
+  stepLabel?: string;
 }
 
 /** AMT 진행 상태 */
@@ -59,6 +61,14 @@ export interface AMTProgress {
 export interface FetchProgress {
   /** 처리 단계 */
   stage: 'downloading' | 'converting';
+  /** 진행률 (0 ~ 100) */
+  percent: number;
+}
+
+/** 모델 다운로드 진행 상태 */
+export interface ModelDownloadProgress {
+  /** 다운로드 중인 모델 이름 */
+  modelName: string;
   /** 진행률 (0 ~ 100) */
   percent: number;
 }

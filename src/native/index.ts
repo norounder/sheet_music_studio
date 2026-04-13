@@ -1,6 +1,14 @@
 /**
- * Native module - N-API bindings for CoreML and ONNX Runtime.
- * This module provides the bridge between TypeScript and native
- * C++/Objective-C++ code for AI model inference.
+ * Native module bridge.
+ * Originally planned for N-API C++ bindings to CoreML/ONNX Runtime.
+ * Replaced with onnxruntime-node (npm) for cross-platform inference
+ * without native C++ compilation.
+ *
+ * Re-exports from the ModelManager which provides:
+ * - ONNX model loading via onnxruntime-node
+ * - DirectML (Windows GPU) and CPU execution providers
+ * - Memory tracking and lifecycle management
  */
-export {};
+
+export { ModelManager } from '../main/omr/modelManager';
+export type { ModelManagerConfig, LoadedModel, ModelLoadOptions } from '../main/omr/modelManager';

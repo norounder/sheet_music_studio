@@ -19,10 +19,11 @@ export interface OMRImportDialogProps {
 
 type DialogState = 'processing' | 'error';
 
+/** Fallback stage labels when stepLabel is not provided by the server */
 const STAGE_LABELS: Record<OMRProgress['stage'], string> = {
-  preprocessing: 'Preprocessing',
-  inference: 'Recognizing',
-  postprocessing: 'Finalizing',
+  preprocessing: 'Preparing image...',
+  inference: 'Recognizing...',
+  postprocessing: 'Finalizing...',
 };
 
 const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
@@ -38,14 +39,29 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
     percent: 0,
   });
   const [errorMessage, setErrorMessage] = useState('');
+  const [elapsedSec, setElapsedSec] = useState(0);
   const invokedRef = useRef(false);
+  const startTimeRef = useRef(Date.now());
+  const maxPercentRef = useRef(0);
 
-  // Subscribe to progress events
+  // Elapsed time counter
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Subscribe to progress events — enforce monotonic progress (never go backward)
   useEffect(() => {
     const unsubscribe = window.electronAPI.on(
       OMR_CHANNELS.PROGRESS,
       (data: unknown) => {
-        setProgress(data as OMRProgress);
+        const incoming = data as OMRProgress;
+        if (incoming.percent >= maxPercentRef.current) {
+          maxPercentRef.current = incoming.percent;
+          setProgress(incoming);
+        }
       },
     );
     return unsubscribe;
@@ -92,7 +108,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
       <div className="dialog-overlay" onClick={onCancel}>
         <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
           <h3 className="dialog-title">OMR Error</h3>
-          <p style={{ color: '#f38ba8', margin: '12px 0' }}>{errorMessage}</p>
+          <p style={{ color: 'var(--danger, #f87171)', margin: '12px 0' }}>{errorMessage}</p>
           <div className="dialog-actions">
             <button className="dialog-btn" onClick={onCancel}>
               Close
@@ -110,10 +126,10 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
 
         <div style={{ margin: '16px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ color: '#cdd6f4', fontSize: 13 }}>
-              {STAGE_LABELS[progress.stage]}
+            <span style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13 }}>
+              {progress.stepLabel ?? STAGE_LABELS[progress.stage]}
             </span>
-            <span style={{ color: '#a6adc8', fontSize: 13 }}>
+            <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 13 }}>
               {progress.totalPages > 1
                 ? `Page ${progress.currentPage} / ${progress.totalPages}`
                 : ''}
@@ -125,7 +141,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
             style={{
               width: '100%',
               height: 6,
-              backgroundColor: '#313244',
+              backgroundColor: 'var(--border, rgba(255,255,255,0.08))',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -134,15 +150,18 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
               style={{
                 width: `${progress.percent}%`,
                 height: '100%',
-                backgroundColor: '#89b4fa',
+                backgroundColor: 'var(--accent, #7c6cf0)',
                 borderRadius: 3,
                 transition: 'width 0.3s ease',
               }}
             />
           </div>
 
-          <div style={{ textAlign: 'right', marginTop: 4 }}>
-            <span style={{ color: '#a6adc8', fontSize: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+            <span style={{ color: 'var(--text-muted, #6b7394)', fontSize: 12 }}>
+              {elapsedSec}s
+            </span>
+            <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>
               {progress.percent}%
             </span>
           </div>

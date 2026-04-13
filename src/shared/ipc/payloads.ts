@@ -56,9 +56,14 @@ export interface FileExportResponse {
 
 // ─── OMR 채널 Payloads ───
 
+/** OMR engine mode */
+export type OMREngineMode = 'auto' | 'audiveris-only' | 'smt-only';
+
 export interface OMRRecognizeRequest {
   filePath: string;
   fileType: 'image' | 'pdf';
+  /** Override engine mode (default: from config) */
+  engineMode?: OMREngineMode;
 }
 
 export interface OMRRecognizeResponse {

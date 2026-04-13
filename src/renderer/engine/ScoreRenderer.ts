@@ -448,16 +448,19 @@ export class ScoreRenderer {
         ctx.restore();
       }
 
-      // 파트 이름 표시 (각 줄 첫 마디의 첫 보표 왼쪽)
-      if (isFirstInLine && staves[0] && part.name) {
-        const ctx = this.context as RenderContext;
-        ctx.save();
-        ctx.setFont('Arial', 10, 'normal');
-        const nameY = numStaves > 1
-          ? (staves[0].getYForLine(2) + staves[staves.length - 1].getYForLine(2)) / 2
-          : staves[0].getYForLine(2);
-        ctx.fillText(part.abbreviation ?? part.name, 2, nameY);
-        ctx.restore();
+      // 파트 이름 표시 (첫 시스템만, 보표 왼쪽)
+      if (isFirstInLine && lineIndex === 0 && staves[0] && part.name) {
+        try {
+          const ctx = this.context!;
+          ctx.save();
+          ctx.setFont('Arial', 9, 'italic');
+          ctx.setFillStyle('#999');
+          const nameY = numStaves > 1
+            ? (staves[0].getYForLine(2) + staves[staves.length - 1].getYForLine(2)) / 2
+            : staves[0].getYForLine(2);
+          ctx.fillText(part.abbreviation ?? part.name, 4, nameY);
+          ctx.restore();
+        } catch { /* skip part name rendering */ }
       }
 
       // 대보표 연결선 (grand staff connector)
@@ -479,7 +482,7 @@ export class ScoreRenderer {
       }
 
       // 음표/쉼표 렌더링
-      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs, lineIndex);
+      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs, lineIndex, measure.harmonies);
 
       // Direction 렌더링 (다이나믹, 템포 등)
       this.renderDirections(measure.directions, staves);
@@ -506,12 +509,6 @@ export class ScoreRenderer {
             wedgeType = null;
           }
         }
-      }
-
-      // Harmony 렌더링 (코드 네임)
-      if (measure.harmonies?.length) {
-        const measureRendered = allRenderedNotes.filter(rn => rn.measureIndex === mIdx);
-        this.renderHarmonies(measure.harmonies, measureNotes.vexNotesByVoice, measureRendered);
       }
 
       // 볼타 괄호 렌더링
@@ -634,6 +631,7 @@ export class ScoreRenderer {
     currentKeyFifths: number,
     currentClefs: Map<number, string>,
     lineIndex: number,
+    harmonies?: Harmony[],
   ): { beamGroups: BeamGroup[]; tupletGroups: TupletGroup[]; vexNotesByVoice: StaveNote[][]; hasExplicitBeamData: boolean } {
     if (!this.context) return { beamGroups: [], tupletGroups: [], vexNotesByVoice: [], hasExplicitBeamData: false };
 
@@ -695,6 +693,29 @@ export class ScoreRenderer {
 
       if (vexVoices.length > 0) {
         try {
+          // Harmony/chord symbols: attach BEFORE format so VexFlow can calculate widths
+          if (harmonies?.length && staffVexNotesByVoice.length > 0) {
+            const firstVoice = staffVexNotesByVoice[0];
+            for (let hIdx = 0; hIdx < harmonies.length; hIdx++) {
+              const h = harmonies[hIdx];
+              const target = firstVoice[Math.min(hIdx, firstVoice.length - 1)];
+              if (!target || target.isRest()) continue;
+              try {
+                const rootAlter = h.root.alter ? (ScoreRenderer.ALTER_SYMBOL[h.root.alter] ?? '') : '';
+                const kindSuffix = ScoreRenderer.HARMONY_KIND_SUFFIX[h.kind] ?? (h.kind === 'major' ? '' : h.kind);
+                let text = `${h.root.step}${rootAlter}${kindSuffix}`;
+                if (h.bass) {
+                  const bassAlter = h.bass.alter ? (ScoreRenderer.ALTER_SYMBOL[h.bass.alter] ?? '') : '';
+                  text += `/${h.bass.step}${bassAlter}`;
+                }
+                const cs = new ChordSymbol();
+                cs.addGlyphOrText(text);
+                cs.setFont('Arial', 12, 'bold');
+                target.addModifier(cs);
+              } catch { /* skip chord symbol errors */ }
+            }
+          }
+
           const noteStartX = stave.getNoteStartX();
           const noteEndX = stave.getNoteEndX();
           const availableWidth = Math.max(noteEndX - noteStartX - 10, 100);
@@ -703,12 +724,10 @@ export class ScoreRenderer {
             .format(vexVoices, availableWidth, { alignRests: true });
 
           // 빔 생성: draw() 전에 실행하여 beamed 음표의 flag를 자동 숨김
-          // (Beam 생성자가 음표의 renderFlag = false 설정)
           const NON_BEAMABLE = new Set(['w', 'h']);
           const staffBeams: Beam[] = [];
           for (const noteGroup of staffVexNotesByVoice) {
             try {
-              // 쉼표 제외, 온음표/2분음표 제외 → 8분음표 이하만 beam 대상
               const beamable = noteGroup.filter(
                 (n) => !n.isRest() && !NON_BEAMABLE.has(n.getDuration()),
               );
@@ -724,7 +743,7 @@ export class ScoreRenderer {
             }
           }
 
-          // 음표 draw (flag 없이 렌더링됨)
+          // 음표 draw
           for (const v of vexVoices) {
             v.draw(this.context!, stave);
           }
@@ -1192,6 +1211,16 @@ export class ScoreRenderer {
         const startNote = tieStarts.get(key);
         if (startNote) {
           try {
+            // Guard: skip if notes don't have Y values (format/draw failed)
+            const hasYValues = (n: StaveNote): boolean => {
+              try { n.getYs(); return true; } catch { return false; }
+            };
+
+            if (!hasYValues(startNote.staveNote) || !hasYValues(rn.staveNote)) {
+              tieStarts.delete(key);
+              continue;
+            }
+
             if (startNote.lineIndex === rn.lineIndex) {
               // 같은 줄: 양쪽 음표를 연결하는 일반 타이
               const tie = new StaveTie({
@@ -1407,7 +1436,7 @@ export class ScoreRenderer {
   };
 
   private static readonly ALTER_SYMBOL: Record<number, string> = {
-    [-2]: '𝄫', [-1]: '♭', [0]: '', [1]: '♯', [2]: '𝄪',
+    [-2]: 'bb', [-1]: 'b', [0]: '', [1]: '#', [2]: '##',
   };
 
   private renderHarmonies(
