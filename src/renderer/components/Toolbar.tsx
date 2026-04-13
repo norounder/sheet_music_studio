@@ -94,8 +94,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   return (
     <div className="toolbar" role="toolbar" aria-label="Score editor toolbar">
-      <span className="toolbar-title">Sheet Music Studio</span>
-
       {/* File operations */}
       <div className="toolbar-group">
         <button className="toolbar-btn" onClick={onOpen} title="Open file">
