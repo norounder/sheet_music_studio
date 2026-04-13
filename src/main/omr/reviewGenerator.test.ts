@@ -2,7 +2,7 @@
  * Unit tests for reviewGenerator extended music theory validation rules.
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeEach } from 'vitest';
 import { generateReviewState } from './reviewGenerator';
 import type { ScoreData, Measure } from '../../shared/types/measure';
 import type { NoteElement, RestElement, Duration, Pitch } from '../../shared/types/elements';
