@@ -45,6 +45,8 @@ export interface OMRProgress {
   totalPages: number;
   /** 진행률 (0 ~ 100) */
   percent: number;
+  /** 현재 수행 중인 작업 설명 (UI 표시용) */
+  stepLabel?: string;
 }
 
 /** AMT 진행 상태 */

@@ -19,25 +19,12 @@ export interface OMRImportDialogProps {
 
 type DialogState = 'processing' | 'error';
 
-/** Map stage + percent to more detailed progress labels */
-function getStageLabel(stage: OMRProgress['stage'], percent: number): string {
-  if (stage === 'preprocessing') {
-    return 'Preparing image...';
-  }
-  if (stage === 'inference') {
-    if (percent < 25) return 'Loading models...';
-    if (percent < 40) return 'Analyzing staff lines...';
-    if (percent < 55) return 'Detecting notes & symbols...';
-    if (percent < 70) return 'Recognizing rhythm...';
-    return 'Processing chords & text...';
-  }
-  if (stage === 'postprocessing') {
-    if (percent < 85) return 'Merging results...';
-    if (percent < 95) return 'Verifying music theory...';
-    return 'Building score...';
-  }
-  return 'Processing...';
-}
+/** Fallback stage labels when stepLabel is not provided by the server */
+const STAGE_LABELS: Record<OMRProgress['stage'], string> = {
+  preprocessing: 'Preparing image...',
+  inference: 'Recognizing...',
+  postprocessing: 'Finalizing...',
+};
 
 const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
   onComplete,
@@ -55,6 +42,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
   const [elapsedSec, setElapsedSec] = useState(0);
   const invokedRef = useRef(false);
   const startTimeRef = useRef(Date.now());
+  const maxPercentRef = useRef(0);
 
   // Elapsed time counter
   useEffect(() => {
@@ -64,12 +52,16 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Subscribe to progress events
+  // Subscribe to progress events — enforce monotonic progress (never go backward)
   useEffect(() => {
     const unsubscribe = window.electronAPI.on(
       OMR_CHANNELS.PROGRESS,
       (data: unknown) => {
-        setProgress(data as OMRProgress);
+        const incoming = data as OMRProgress;
+        if (incoming.percent >= maxPercentRef.current) {
+          maxPercentRef.current = incoming.percent;
+          setProgress(incoming);
+        }
       },
     );
     return unsubscribe;
@@ -135,7 +127,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
         <div style={{ margin: '16px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ color: '#cdd6f4', fontSize: 13 }}>
-              {getStageLabel(progress.stage, progress.percent)}
+              {progress.stepLabel ?? STAGE_LABELS[progress.stage]}
             </span>
             <span style={{ color: '#a6adc8', fontSize: 13 }}>
               {progress.totalPages > 1

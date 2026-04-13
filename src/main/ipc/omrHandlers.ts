@@ -32,26 +32,35 @@ import type { ScoreDocument, ScoreMetadata } from '../../shared/types/document';
 import type { OMRProgress } from '../../shared/types/progress';
 import type { ScoreData } from '../../shared/types/measure';
 
-/** Send progress event to renderer */
-function reportProgress(
-  mainWindow: BrowserWindow | null,
-  progress: OMRProgress,
-): void {
-  if (mainWindow) {
-    sendIPCEvent(mainWindow, OMR_CHANNELS.PROGRESS, progress);
-  }
+/**
+ * Monotonic progress reporter — ensures percent never goes backward.
+ * Tracks the highest percent seen and only sends updates when it increases.
+ */
+function createProgressReporter(mainWindow: BrowserWindow | null) {
+  let maxPercent = 0;
+
+  return (progress: OMRProgress) => {
+    // Never go backward
+    if (progress.percent <= maxPercent && progress.percent < 100) {
+      return;
+    }
+    maxPercent = progress.percent;
+    if (mainWindow) {
+      sendIPCEvent(mainWindow, OMR_CHANNELS.PROGRESS, progress);
+    }
+  };
 }
 
-/** Scale Audiveris progress (0-100) to overall pipeline range */
+/** Audiveris step names mapped to user-facing labels */
+const AUDIVERIS_STEP_LABELS: Record<string, string> = {
+  preprocessing: 'Analyzing image...',
+  inference: 'Recognizing symbols...',
+  postprocessing: 'Building structure...',
+};
+
+/** Scale Audiveris progress (0-100) to overall pipeline range (15-70%) */
 function scaleAudiverisProgress(percent: number): number {
-  // Audiveris progress maps to 15-65% of overall
-  return 15 + Math.round(percent * 0.5);
-}
-
-/** Scale SMT++ progress (0-100) to overall pipeline range */
-function scaleSMTProgress(percent: number): number {
-  // SMT++ progress maps to 15-65% of overall
-  return 15 + Math.round(percent * 0.5);
+  return 15 + Math.round(percent * 0.55);
 }
 
 /**
@@ -126,21 +135,21 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           BrowserWindow.getAllWindows()[0] ??
           null;
 
+        const report = createProgressReporter(mainWindow);
+
         // ── Phase 1: Image Preprocessing ──
-        reportProgress(mainWindow, {
+        report({
           stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 0,
+          stepLabel: 'Upscaling image...',
         });
 
         const isImage = !isPdfFile(filePath);
 
-        // Preprocess for Audiveris: upscale only (no binarize, Audiveris does its own)
         let audiverisInputPath = filePath;
-        // Preprocess for SMT++: full pipeline (grayscale, binarize, normalize)
         let smtInputPath = filePath;
 
         if (isImage && omrConfig.preprocessing.enabled) {
           try {
-            // For Audiveris: upscale + sharpen only (preserve original tones)
             const audPreprocess = await preprocessImage(filePath, path.join(tempDir, 'preproc-aud'), {
               targetDPI: omrConfig.preprocessing.targetDPI,
               binarize: false,
@@ -149,7 +158,11 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
             });
             audiverisInputPath = audPreprocess.processedPath;
 
-            // For SMT++: full preprocessing
+            report({
+              stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 8,
+              stepLabel: 'Normalizing image...',
+            });
+
             const smtPreprocess = await preprocessImage(filePath, path.join(tempDir, 'preproc-smt'), {
               targetDPI: omrConfig.preprocessing.targetDPI,
               binarize: omrConfig.preprocessing.binarize,
@@ -163,8 +176,9 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           }
         }
 
-        reportProgress(mainWindow, {
+        report({
           stage: 'preprocessing', currentPage: 1, totalPages: 1, percent: 15,
+          stepLabel: 'Starting recognition...',
         });
 
         // ── Phase 2: Parallel Inference ──
@@ -183,10 +197,11 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
                 inputPath: isImage ? audiverisInputPath : filePath, // Use upscaled for images, original for PDF
                 outputDir: path.join(tempDir, 'audiveris'),
                 config,
-                onProgress: (progress) => {
-                  reportProgress(mainWindow, {
-                    ...progress,
-                    percent: scaleAudiverisProgress(progress.percent),
+                onProgress: (p) => {
+                  report({
+                    ...p,
+                    percent: scaleAudiverisProgress(p.percent),
+                    stepLabel: AUDIVERIS_STEP_LABELS[p.stage] ?? 'Processing...',
                   });
                 },
               });
@@ -206,10 +221,13 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
                 const smtResult = await runSMT({
                   imagePath: smtInputPath,
                   modelManager,
-                  onProgress: (progress) => {
-                    reportProgress(mainWindow, {
-                      ...progress,
-                      percent: scaleSMTProgress(progress.percent),
+                  onProgress: (p) => {
+                    // SMT++ progress is secondary — don't override Audiveris labels
+                    // monotonic reporter will ignore if Audiveris is ahead
+                    report({
+                      ...p,
+                      percent: 15 + Math.round(p.percent * 0.55),
+                      stepLabel: p.stepLabel ?? 'Running ML model...',
                     });
                   },
                 });
@@ -246,8 +264,9 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           };
         }
 
-        reportProgress(mainWindow, {
+        report({
           stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 75,
+          stepLabel: 'Merging results...',
         });
 
         // ── Phase 3: Ensemble Merging ──
@@ -267,8 +286,9 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           finalScoreData = audiverisScoreData ?? smtScoreData!;
         }
 
-        reportProgress(mainWindow, {
+        report({
           stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 85,
+          stepLabel: 'Checking music theory...',
         });
 
         // ── Phase 4: Music Theory Post-processing ──
@@ -277,8 +297,9 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           mergeConflicts,
         });
 
-        reportProgress(mainWindow, {
+        report({
           stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 95,
+          stepLabel: 'Building score...',
         });
 
         // ── Phase 5: Build ScoreDocument ──
@@ -297,8 +318,9 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
           reviewState: reviewState.items.length > 0 ? reviewState : undefined,
         };
 
-        reportProgress(mainWindow, {
+        report({
           stage: 'postprocessing', currentPage: 1, totalPages: 1, percent: 100,
+          stepLabel: 'Complete',
         });
 
         return {
