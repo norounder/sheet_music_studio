@@ -1210,6 +1210,16 @@ export class ScoreRenderer {
         const startNote = tieStarts.get(key);
         if (startNote) {
           try {
+            // Guard: skip if notes don't have Y values (format/draw failed)
+            const hasYValues = (n: StaveNote): boolean => {
+              try { n.getYs(); return true; } catch { return false; }
+            };
+
+            if (!hasYValues(startNote.staveNote) || !hasYValues(rn.staveNote)) {
+              tieStarts.delete(key);
+              continue;
+            }
+
             if (startNote.lineIndex === rn.lineIndex) {
               // 같은 줄: 양쪽 음표를 연결하는 일반 타이
               const tie = new StaveTie({
