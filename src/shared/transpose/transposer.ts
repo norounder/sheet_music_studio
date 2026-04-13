@@ -11,6 +11,7 @@ import type {
   KeySignature,
   NoteElement,
   MeasureElement,
+  Harmony,
 } from '../types';
 
 // ─── Constants ───
@@ -230,12 +231,32 @@ export function transposeScoreData(
         };
       });
 
+      // Harmony(코드) 변환
+      const newHarmonies: Harmony[] | undefined = measure.harmonies?.map((h) => {
+        const rootPitch: Pitch = { step: h.root.step as PitchStep, octave: 4, alter: h.root.alter };
+        const transposedRoot = transposePitch(rootPitch, semitones, targetKey.fifths);
+
+        const result: Harmony = {
+          ...h,
+          root: { step: transposedRoot.step, alter: transposedRoot.alter },
+        };
+
+        if (h.bass) {
+          const bassPitch: Pitch = { step: h.bass.step as PitchStep, octave: 4, alter: h.bass.alter };
+          const transposedBass = transposePitch(bassPitch, semitones, targetKey.fifths);
+          result.bass = { step: transposedBass.step, alter: transposedBass.alter };
+        }
+
+        return result;
+      });
+
       return {
         ...measure,
         ...(newAttributes !== measure.attributes
           ? { attributes: newAttributes }
           : {}),
         elements: newElements,
+        ...(newHarmonies ? { harmonies: newHarmonies } : {}),
       };
     });
 

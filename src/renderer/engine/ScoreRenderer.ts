@@ -479,7 +479,7 @@ export class ScoreRenderer {
       }
 
       // 음표/쉼표 렌더링
-      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs, lineIndex);
+      const measureNotes = this.renderMeasureElements(measure, staves, numStaves, mIdx, allRenderedNotes, currentKeyFifths, currentClefs, lineIndex, measure.harmonies);
 
       // Direction 렌더링 (다이나믹, 템포 등)
       this.renderDirections(measure.directions, staves);
@@ -506,12 +506,6 @@ export class ScoreRenderer {
             wedgeType = null;
           }
         }
-      }
-
-      // Harmony 렌더링 (코드 네임)
-      if (measure.harmonies?.length) {
-        const measureRendered = allRenderedNotes.filter(rn => rn.measureIndex === mIdx);
-        this.renderHarmonies(measure.harmonies, measureNotes.vexNotesByVoice, measureRendered);
       }
 
       // 볼타 괄호 렌더링
@@ -634,6 +628,7 @@ export class ScoreRenderer {
     currentKeyFifths: number,
     currentClefs: Map<number, string>,
     lineIndex: number,
+    harmonies?: Harmony[],
   ): { beamGroups: BeamGroup[]; tupletGroups: TupletGroup[]; vexNotesByVoice: StaveNote[][]; hasExplicitBeamData: boolean } {
     if (!this.context) return { beamGroups: [], tupletGroups: [], vexNotesByVoice: [], hasExplicitBeamData: false };
 
@@ -721,6 +716,29 @@ export class ScoreRenderer {
               }
             } catch (e) {
               console.warn('Beam generation failed:', e);
+            }
+          }
+
+          // Harmony/chord symbols: attach to notes BEFORE draw
+          if (harmonies?.length && staffVexNotesByVoice.length > 0) {
+            const firstVoice = staffVexNotesByVoice[0];
+            for (let hIdx = 0; hIdx < harmonies.length; hIdx++) {
+              const h = harmonies[hIdx];
+              const target = firstVoice[Math.min(hIdx, firstVoice.length - 1)];
+              if (!target) continue;
+              try {
+                const rootAlter = h.root.alter ? (ScoreRenderer.ALTER_SYMBOL[h.root.alter] ?? '') : '';
+                const kindSuffix = ScoreRenderer.HARMONY_KIND_SUFFIX[h.kind] ?? (h.kind === 'major' ? '' : h.kind);
+                let text = `${h.root.step}${rootAlter}${kindSuffix}`;
+                if (h.bass) {
+                  const bassAlter = h.bass.alter ? (ScoreRenderer.ALTER_SYMBOL[h.bass.alter] ?? '') : '';
+                  text += `/${h.bass.step}${bassAlter}`;
+                }
+                const cs = new ChordSymbol();
+                cs.addGlyphOrText(text);
+                cs.setFont('Arial', 11, 'normal');
+                target.addModifier(cs);
+              } catch { /* skip */ }
             }
           }
 
