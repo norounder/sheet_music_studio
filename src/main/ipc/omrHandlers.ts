@@ -26,7 +26,7 @@ import { areSMTModelsAvailable, runSMT } from '../omr/smtRunner';
 import { loadOMRConfig } from '../omr/omrConfig';
 import { MusicXMLParser } from '../../shared/serializer/MusicXMLParser';
 import type { ModelManager } from '../omr/modelManager';
-import type { IPCResponse } from '../../shared/ipc/payloads';
+import type { IPCResponse, OMREngineMode } from '../../shared/ipc/payloads';
 import type { OMRRecognizeResponse } from '../../shared/ipc/payloads';
 import type { ScoreDocument, ScoreMetadata } from '../../shared/types/document';
 import type { OMRProgress } from '../../shared/types/progress';
@@ -68,9 +68,10 @@ function scaleAudiverisProgress(percent: number): number {
  * Accepts an optional ModelManager for ONNX model inference.
  */
 export function registerOMRHandlers(modelManager?: ModelManager): void {
-  registerIPCHandler<void, OMRRecognizeResponse | null>(
+  registerIPCHandler<{ engineMode?: OMREngineMode } | void, OMRRecognizeResponse | null>(
     OMR_CHANNELS.RECOGNIZE,
-    async (): Promise<IPCResponse<OMRRecognizeResponse | null>> => {
+    async (_event, request): Promise<IPCResponse<OMRRecognizeResponse | null>> => {
+      const requestedMode = (request as { engineMode?: OMREngineMode } | undefined)?.engineMode;
       // 1. Native file open dialog with image/PDF filters
       const dialogResult = await dialog.showOpenDialog({
         title: 'OMR: Select sheet music image or PDF',
@@ -96,14 +97,14 @@ export function registerOMRHandlers(modelManager?: ModelManager): void {
         };
       }
 
-      // 3. Detect available engines (respecting config)
+      // 3. Detect available engines (request overrides config)
       const omrConfig = loadOMRConfig();
+      const engineMode = requestedMode ?? omrConfig.engine.mode;
       const audiverisStatus = await detectAudiveris();
       const smtAvailable = modelManager ? areSMTModelsAvailable(modelManager) : false;
 
-      // Apply engine mode from config
-      const useAudiveris = audiverisStatus.available && omrConfig.engine.mode !== 'smt-only';
-      const useSMT = smtAvailable && omrConfig.engine.mode !== 'audiveris-only';
+      const useAudiveris = audiverisStatus.available && engineMode !== 'smt-only';
+      const useSMT = smtAvailable && engineMode !== 'audiveris-only';
 
       if (!useAudiveris && !useSMT) {
         const details: string[] = [];

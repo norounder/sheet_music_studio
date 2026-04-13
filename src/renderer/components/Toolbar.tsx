@@ -51,6 +51,8 @@ export interface ToolbarProps {
   showMeasureNumbers?: boolean;
   /** 마디 번호 표시 변경 콜백 */
   onShowMeasureNumbersChange?: (show: boolean) => void;
+  /** 설정 열기 콜백 */
+  onSettings?: () => void;
 }
 
 const ZOOM_MIN = 0.25;
@@ -80,6 +82,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onTempoChange,
   showMeasureNumbers = true,
   onShowMeasureNumbersChange,
+  onSettings,
 }) => {
   const handleZoomIn = () => {
     onZoomChange(Math.min(zoom + ZOOM_STEP, ZOOM_MAX));
@@ -235,6 +238,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
           style={{ width: 48, marginLeft: 4 }}
         />
         <span className="zoom-display">BPM</span>
+      </div>
+
+      <div className="toolbar-separator" />
+
+      {/* Settings */}
+      <div className="toolbar-group">
+        <button className="toolbar-btn" onClick={onSettings} title="Settings">
+          <span className="icon">&#9881;</span>
+          <span>Settings</span>
+        </button>
       </div>
     </div>
   );
