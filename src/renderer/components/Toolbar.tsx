@@ -168,9 +168,11 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
       <div className="toolbar-separator" />
 
-      {/* Note spacing */}
+      {/* Note density (staveWidth slider controls density scaling: 350=1.0x) */}
       <div className="toolbar-group">
-        <span className="zoom-display" title="Measure width">↔ {staveWidth}</span>
+        <span className="zoom-display" title="Note density scaling">
+          {(staveWidth / 350).toFixed(1)}x
+        </span>
         <input
           type="range"
           min={200}
@@ -178,7 +180,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           step={25}
           value={staveWidth}
           onChange={(e) => onStaveWidthChange(Number(e.target.value))}
-          title="Measure width"
+          title="Note density — adjusts spacing between notes"
           style={{ width: 80, accentColor: '#cba6f7' }}
         />
       </div>
