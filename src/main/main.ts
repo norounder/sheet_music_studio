@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -45,6 +45,9 @@ app.whenReady().then(() => {
   modelManager = new ModelManager({
     preferredProvider: resolveProvider(omrConfig.inference.provider),
   });
+
+  // Remove default Electron menu bar (custom toolbar handles everything)
+  Menu.setApplicationMenu(null);
 
   registerFileHandlers();
   registerOMRHandlers(modelManager);
