@@ -13,6 +13,8 @@ export interface ReviewPanelProps {
   onAccept: (itemId: string) => void;
   onSkip: (itemId: string) => void;
   onClose: () => void;
+  /** Called when user wants to navigate to a specific measure */
+  onNavigateToMeasure?: (measureIndex: number) => void;
 }
 
 /** Confidence level thresholds for color coding */
@@ -106,11 +108,44 @@ function getReasonIcon(reason: ReviewReason | undefined): string {
   }
 }
 
+/** Get actionable guidance for the user based on reason type */
+function getActionGuidance(reason: ReviewReason | undefined): string {
+  if (!reason) return 'Check this symbol and accept if correct, or edit it in the score.';
+
+  switch (reason.type) {
+    case 'rhythm-mismatch':
+      return reason.excessDivisions > 0
+        ? 'This measure has too many beats. Try shortening a note or removing an extra note.'
+        : 'This measure has too few beats. Try lengthening a note or adding a rest.';
+    case 'out-of-range':
+      return 'This note is unusually high or low for this clef. Check if the pitch is correct.';
+    case 'grace-note':
+      return 'Grace notes are often misrecognized. Verify the pitch and that it should be a grace note.';
+    case 'short-note':
+      return 'Very short notes (32nd+) have high error rates. Check pitch and duration.';
+    case 'double-accidental':
+      return 'Double sharps/flats are rare. Verify this is not a single accidental misread.';
+    case 'tuplet':
+      return 'Check if this is actually a tuplet, and if the grouping (e.g. triplet) is correct.';
+    case 'tie-invalid':
+      return 'Ties must connect notes of the same pitch. Check if this should be a slur instead.';
+    case 'voice-crossing':
+      return 'Upper voice is lower than lower voice. Check if notes are in the right voice.';
+    case 'lyric-gap':
+      return 'This note is missing a lyric syllable. Add the lyric text or verify the note.';
+    case 'repeat-unmatched':
+      return 'A repeat sign is missing its pair. Add the matching repeat or remove this one.';
+    case 'ensemble-conflict':
+      return 'Multiple recognition engines disagreed. Carefully verify this section.';
+  }
+}
+
 const ReviewPanel: React.FC<ReviewPanelProps> = ({
   reviewState,
   onAccept,
   onSkip,
   onClose,
+  onNavigateToMeasure,
 }) => {
   const pendingItems = useMemo(
     () => reviewState.items.filter((item) => item.status === 'pending'),
@@ -191,8 +226,21 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
               {confPercent}%
             </span>
           </div>
-          <div style={{ color: '#a6adc8', fontSize: 12, marginTop: 4 }}>
-            Measure {currentItem.measureIndex + 1}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <span style={{ color: '#a6adc8', fontSize: 12 }}>
+              Measure {currentItem.measureIndex + 1}
+            </span>
+            {onNavigateToMeasure && (
+              <button
+                onClick={() => onNavigateToMeasure(currentItem.measureIndex)}
+                style={{
+                  background: 'none', border: '1px solid #45475a', borderRadius: 3,
+                  color: '#89b4fa', fontSize: 11, padding: '1px 6px', cursor: 'pointer',
+                }}
+              >
+                Go to measure
+              </button>
+            )}
           </div>
         </div>
 
@@ -204,13 +252,25 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
               backgroundColor: '#1e1e2e',
               borderLeft: `3px solid ${confColor}`,
               borderRadius: '0 4px 4px 0',
-              marginBottom: 12,
+              marginBottom: 8,
               fontSize: 12,
               color: '#bac2de',
               lineHeight: 1.4,
             }}
           >
-            {getReasonMessage(currentItem.reason)}
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {getReasonMessage(currentItem.reason)}
+            </div>
+            <div style={{ color: '#7f849c', fontSize: 11 }}>
+              {getActionGuidance(currentItem.reason)}
+            </div>
+          </div>
+        )}
+
+        {/* Fallback guidance when no reason */}
+        {!currentItem.reason && (
+          <div style={{ fontSize: 11, color: '#7f849c', marginBottom: 8 }}>
+            Low confidence recognition. Please verify this symbol in the score.
           </div>
         )}
 

@@ -3,8 +3,8 @@
   "comment": "OMR engine configuration. Auto-detected values can be overridden here.",
 
   "engine": {
-    "mode": "auto",
-    "comment_mode": "auto: use both if available | audiveris-only | smt-only"
+    "mode": "audiveris-only",
+    "comment_mode": "auto: use both if available | audiveris-only | smt-only. SMT++ is experimental — only useful for digitally-rendered scores."
   },
 
   "inference": {

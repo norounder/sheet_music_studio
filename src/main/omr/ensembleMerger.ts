@@ -151,6 +151,12 @@ function mergeMeasures(
   const smtNotes = extractNotes(smtMeasure.elements);
   stats.totalElements += Math.max(audNotes.length, smtNotes.length);
 
+  // If SMT++ produced drastically fewer notes (>50% less), it's unreliable — ignore it
+  if (audNotes.length > 0 && smtNotes.length < audNotes.length * 0.5) {
+    stats.audiverisOnly += audNotes.length;
+    return { ...audMeasure };
+  }
+
   // If note counts match, do element-wise comparison
   if (audNotes.length === smtNotes.length) {
     const mergedElements = audMeasure.elements.map((el, idx) => {
