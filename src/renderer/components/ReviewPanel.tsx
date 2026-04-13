@@ -19,9 +19,9 @@ export interface ReviewPanelProps {
 
 /** Confidence level thresholds for color coding */
 function getConfidenceColor(confidence: number): string {
-  if (confidence < 0.4) return '#f38ba8';  // red
-  if (confidence < 0.6) return '#fab387';  // peach
-  return '#f9e2af';                         // yellow
+  if (confidence < 0.4) return 'var(--danger, #f87171)';
+  if (confidence < 0.6) return 'var(--warning, #fbbf24)';
+  return '#fde68a'; // soft yellow
 }
 
 /** Friendly symbol type labels */
@@ -160,12 +160,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return (
       <div className="review-panel">
         <div className="review-panel-header">
-          <h3 style={{ margin: 0, fontSize: 14, color: '#cdd6f4' }}>Review Complete</h3>
+          <h3 style={{ margin: 0, fontSize: 14, color: 'var(--text-primary, #e8eaf0)' }}>Review Complete</h3>
           <button className="review-panel-close" onClick={onClose} title="Close">
             &times;
           </button>
         </div>
-        <div style={{ padding: 16, textAlign: 'center', color: '#a6adc8' }}>
+        <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-secondary, #9ca3b8)' }}>
           <p>All {reviewState.items.length} items have been reviewed.</p>
           <button className="dialog-btn primary" onClick={onClose} style={{ marginTop: 12 }}>
             Done
@@ -182,22 +182,22 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   return (
     <div className="review-panel">
       <div className="review-panel-header">
-        <h3 style={{ margin: 0, fontSize: 14, color: '#cdd6f4' }}>OMR Review</h3>
+        <h3 style={{ margin: 0, fontSize: 14, color: 'var(--text-primary, #e8eaf0)' }}>OMR Review</h3>
         <button className="review-panel-close" onClick={onClose} title="Close">
           &times;
         </button>
       </div>
 
       {/* Progress */}
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid #313244' }}>
-        <span style={{ color: '#a6adc8', fontSize: 12 }}>
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
+        <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>
           {completedCount} / {reviewState.items.length} reviewed
         </span>
         <div
           style={{
             width: '100%',
             height: 3,
-            backgroundColor: '#313244',
+            backgroundColor: 'var(--border, rgba(255,255,255,0.08))',
             borderRadius: 2,
             marginTop: 4,
           }}
@@ -206,7 +206,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
             style={{
               width: `${(completedCount / reviewState.items.length) * 100}%`,
               height: '100%',
-              backgroundColor: '#a6e3a1',
+              backgroundColor: 'var(--success, #4ade80)',
               borderRadius: 2,
               transition: 'width 0.3s ease',
             }}
@@ -218,7 +218,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
       <div style={{ padding: 16 }}>
         <div style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: '#cdd6f4', fontSize: 13, fontWeight: 600 }}>
+            <span style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13, fontWeight: 600 }}>
               <span style={{ marginRight: 6 }}>{getReasonIcon(currentItem.reason)}</span>
               {SYMBOL_LABELS[conf.type] ?? conf.type}
             </span>
@@ -227,15 +227,15 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-            <span style={{ color: '#a6adc8', fontSize: 12 }}>
+            <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>
               Measure {currentItem.measureIndex + 1}
             </span>
             {onNavigateToMeasure && (
               <button
                 onClick={() => onNavigateToMeasure(currentItem.measureIndex)}
                 style={{
-                  background: 'none', border: '1px solid #45475a', borderRadius: 3,
-                  color: '#89b4fa', fontSize: 11, padding: '1px 6px', cursor: 'pointer',
+                  background: 'none', border: '1px solid var(--bg-elevated, #253355)', borderRadius: 3,
+                  color: 'var(--accent, #7c6cf0)', fontSize: 11, padding: '1px 6px', cursor: 'pointer',
                 }}
               >
                 Go to measure
@@ -249,19 +249,19 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
           <div
             style={{
               padding: '8px 10px',
-              backgroundColor: '#1e1e2e',
+              backgroundColor: 'var(--bg-primary, #1a1a2e)',
               borderLeft: `3px solid ${confColor}`,
               borderRadius: '0 4px 4px 0',
               marginBottom: 8,
               fontSize: 12,
-              color: '#bac2de',
+              color: 'var(--text-secondary, #9ca3b8)',
               lineHeight: 1.4,
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               {getReasonMessage(currentItem.reason)}
             </div>
-            <div style={{ color: '#7f849c', fontSize: 11 }}>
+            <div style={{ color: 'var(--text-muted, #6b7394)', fontSize: 11 }}>
               {getActionGuidance(currentItem.reason)}
             </div>
           </div>
@@ -269,7 +269,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
         {/* Fallback guidance when no reason */}
         {!currentItem.reason && (
-          <div style={{ fontSize: 11, color: '#7f849c', marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted, #6b7394)', marginBottom: 8 }}>
             Low confidence recognition. Please verify this symbol in the score.
           </div>
         )}
@@ -279,7 +279,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
           style={{
             width: '100%',
             height: 4,
-            backgroundColor: '#313244',
+            backgroundColor: 'var(--border, rgba(255,255,255,0.08))',
             borderRadius: 2,
             marginBottom: 16,
           }}
@@ -314,8 +314,8 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
       </div>
 
       {/* Remaining items summary */}
-      <div style={{ padding: '8px 16px', borderTop: '1px solid #313244' }}>
-        <span style={{ color: '#585b70', fontSize: 11 }}>
+      <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
+        <span style={{ color: 'var(--text-muted, #6b7394)', fontSize: 11 }}>
           {pendingItems.length} item{pendingItems.length !== 1 ? 's' : ''} remaining
         </span>
       </div>

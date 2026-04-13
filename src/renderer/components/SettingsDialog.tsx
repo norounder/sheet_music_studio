@@ -72,7 +72,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
         {/* OMR Engine */}
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ color: '#cdd6f4', fontSize: 13, marginBottom: 8 }}>OMR Engine</h4>
+          <h4 style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13, marginBottom: 8 }}>OMR Engine</h4>
           {ENGINE_OPTIONS.map((opt) => (
             <label
               key={opt.value}
@@ -82,8 +82,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 marginBottom: 4,
                 borderRadius: 6,
                 cursor: 'pointer',
-                backgroundColor: local.engine.mode === opt.value ? '#313244' : 'transparent',
-                border: local.engine.mode === opt.value ? '1px solid #585b70' : '1px solid transparent',
+                backgroundColor: local.engine.mode === opt.value ? 'var(--bg-elevated, #253355)' : 'transparent',
+                border: local.engine.mode === opt.value ? '1px solid var(--border-strong, rgba(255,255,255,0.14))' : '1px solid transparent',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -93,11 +93,11 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   value={opt.value}
                   checked={local.engine.mode === opt.value}
                   onChange={() => updateEngine(opt.value)}
-                  style={{ accentColor: '#89b4fa' }}
+                  style={{ accentColor: 'var(--accent, #7c6cf0)' }}
                 />
-                <span style={{ color: '#cdd6f4', fontSize: 13 }}>{opt.label}</span>
+                <span style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13 }}>{opt.label}</span>
               </div>
-              <div style={{ color: '#7f849c', fontSize: 11, marginLeft: 24, marginTop: 2 }}>
+              <div style={{ color: 'var(--text-muted, #6b7394)', fontSize: 11, marginLeft: 24, marginTop: 2 }}>
                 {opt.description}
               </div>
             </label>
@@ -107,14 +107,14 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         {/* Inference Provider (only relevant when SMT++ is used) */}
         {local.engine.mode !== 'audiveris-only' && (
           <div style={{ marginBottom: 20 }}>
-            <h4 style={{ color: '#cdd6f4', fontSize: 13, marginBottom: 8 }}>ML Inference</h4>
+            <h4 style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13, marginBottom: 8 }}>ML Inference</h4>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ color: '#a6adc8', fontSize: 12, minWidth: 60 }}>Provider</span>
+              <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12, minWidth: 60 }}>Provider</span>
               <select
                 value={local.inference.provider}
                 onChange={(e) => setLocal({ ...local, inference: { ...local.inference, provider: e.target.value as InferenceProvider } })}
                 style={{
-                  backgroundColor: '#313244', color: '#cdd6f4', border: '1px solid #585b70',
+                  backgroundColor: 'var(--bg-elevated, #253355)', color: 'var(--text-primary, #e8eaf0)', border: '1px solid var(--border-strong, rgba(255,255,255,0.14))',
                   borderRadius: 4, padding: '4px 8px', fontSize: 12,
                 }}
               >
@@ -124,7 +124,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               </select>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: '#a6adc8', fontSize: 12, minWidth: 60 }}>Max tokens</span>
+              <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12, minWidth: 60 }}>Max tokens</span>
               <input
                 type="number"
                 min={100}
@@ -133,37 +133,37 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 value={local.smt.maxTokens}
                 onChange={(e) => setLocal({ ...local, smt: { ...local.smt, maxTokens: parseInt(e.target.value, 10) || 500 } })}
                 style={{
-                  backgroundColor: '#313244', color: '#cdd6f4', border: '1px solid #585b70',
+                  backgroundColor: 'var(--bg-elevated, #253355)', color: 'var(--text-primary, #e8eaf0)', border: '1px solid var(--border-strong, rgba(255,255,255,0.14))',
                   borderRadius: 4, padding: '4px 8px', fontSize: 12, width: 70,
                 }}
               />
-              <span style={{ color: '#585b70', fontSize: 11 }}>Lower = faster</span>
+              <span style={{ color: 'var(--border-strong, rgba(255,255,255,0.14))', fontSize: 11 }}>Lower = faster</span>
             </div>
           </div>
         )}
 
         {/* Preprocessing */}
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ color: '#cdd6f4', fontSize: 13, marginBottom: 8 }}>Image Preprocessing</h4>
+          <h4 style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13, marginBottom: 8 }}>Image Preprocessing</h4>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={local.preprocessing.enabled}
               onChange={(e) => updatePreprocessing('enabled', e.target.checked)}
-              style={{ accentColor: '#89b4fa' }}
+              style={{ accentColor: 'var(--accent, #7c6cf0)' }}
             />
-            <span style={{ color: '#cdd6f4', fontSize: 12 }}>Enable preprocessing</span>
+            <span style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 12 }}>Enable preprocessing</span>
           </label>
 
           {local.preprocessing.enabled && (
             <div style={{ marginLeft: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span style={{ color: '#a6adc8', fontSize: 12, minWidth: 70 }}>Target DPI</span>
+                <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12, minWidth: 70 }}>Target DPI</span>
                 <select
                   value={local.preprocessing.targetDPI}
                   onChange={(e) => updatePreprocessing('targetDPI', parseInt(e.target.value, 10))}
                   style={{
-                    backgroundColor: '#313244', color: '#cdd6f4', border: '1px solid #585b70',
+                    backgroundColor: 'var(--bg-elevated, #253355)', color: 'var(--text-primary, #e8eaf0)', border: '1px solid var(--border-strong, rgba(255,255,255,0.14))',
                     borderRadius: 4, padding: '4px 8px', fontSize: 12,
                   }}
                 >
@@ -173,12 +173,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 </select>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer' }}>
-                <input type="checkbox" checked={local.preprocessing.denoise} onChange={(e) => updatePreprocessing('denoise', e.target.checked)} style={{ accentColor: '#89b4fa' }} />
-                <span style={{ color: '#a6adc8', fontSize: 12 }}>Denoise</span>
+                <input type="checkbox" checked={local.preprocessing.denoise} onChange={(e) => updatePreprocessing('denoise', e.target.checked)} style={{ accentColor: 'var(--accent, #7c6cf0)' }} />
+                <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>Denoise</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, cursor: 'pointer' }}>
-                <input type="checkbox" checked={local.preprocessing.normalizeContrast} onChange={(e) => updatePreprocessing('normalizeContrast', e.target.checked)} style={{ accentColor: '#89b4fa' }} />
-                <span style={{ color: '#a6adc8', fontSize: 12 }}>Normalize contrast</span>
+                <input type="checkbox" checked={local.preprocessing.normalizeContrast} onChange={(e) => updatePreprocessing('normalizeContrast', e.target.checked)} style={{ accentColor: 'var(--accent, #7c6cf0)' }} />
+                <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>Normalize contrast</span>
               </label>
             </div>
           )}

@@ -108,7 +108,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
       <div className="dialog-overlay" onClick={onCancel}>
         <div className="dialog-content" onClick={(e) => e.stopPropagation()}>
           <h3 className="dialog-title">OMR Error</h3>
-          <p style={{ color: '#f38ba8', margin: '12px 0' }}>{errorMessage}</p>
+          <p style={{ color: 'var(--danger, #f87171)', margin: '12px 0' }}>{errorMessage}</p>
           <div className="dialog-actions">
             <button className="dialog-btn" onClick={onCancel}>
               Close
@@ -126,10 +126,10 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
 
         <div style={{ margin: '16px 0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ color: '#cdd6f4', fontSize: 13 }}>
+            <span style={{ color: 'var(--text-primary, #e8eaf0)', fontSize: 13 }}>
               {progress.stepLabel ?? STAGE_LABELS[progress.stage]}
             </span>
-            <span style={{ color: '#a6adc8', fontSize: 13 }}>
+            <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 13 }}>
               {progress.totalPages > 1
                 ? `Page ${progress.currentPage} / ${progress.totalPages}`
                 : ''}
@@ -141,7 +141,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
             style={{
               width: '100%',
               height: 6,
-              backgroundColor: '#313244',
+              backgroundColor: 'var(--border, rgba(255,255,255,0.08))',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -150,7 +150,7 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
               style={{
                 width: `${progress.percent}%`,
                 height: '100%',
-                backgroundColor: '#89b4fa',
+                backgroundColor: 'var(--accent, #7c6cf0)',
                 borderRadius: 3,
                 transition: 'width 0.3s ease',
               }}
@@ -158,10 +158,10 @@ const OMRImportDialog: React.FC<OMRImportDialogProps> = ({
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-            <span style={{ color: '#585b70', fontSize: 12 }}>
+            <span style={{ color: 'var(--text-muted, #6b7394)', fontSize: 12 }}>
               {elapsedSec}s
             </span>
-            <span style={{ color: '#a6adc8', fontSize: 12 }}>
+            <span style={{ color: 'var(--text-secondary, #9ca3b8)', fontSize: 12 }}>
               {progress.percent}%
             </span>
           </div>
